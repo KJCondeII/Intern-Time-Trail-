@@ -1,0 +1,125 @@
+mutation CreateDemoData @transaction @auth(level: USER, insecureReason: "Seed data mutation, typically restricted to admin or development environments.") {
+  user_insertMany(data: [
+    {
+      id: "b4e015d8-04f7-48f8-b391-7f02d4f3b6d2",
+      displayName: "Alice Smith",
+      email: "alice.smith@example.com",
+      passwordHash: "hashed_password_alice",
+      role: "student",
+      firstName: "Alice",
+      lastName: "Smith",
+      contactNumber: "123-456-7890"
+    },
+    {
+      id: "e9f02c11-9e73-45f0-8c20-80a6b7d5a4b1",
+      displayName: "Bob Johnson",
+      email: "bob.johnson@example.com",
+      passwordHash: "hashed_password_bob",
+      role: "supervisor",
+      firstName: "Bob",
+      lastName: "Johnson",
+      contactNumber: "098-765-4321"
+    },
+    {
+      id: "a1c2d3e4-f5g6-7h8i-9j0k-1l2m3n4o5p6q",
+      displayName: "Charlie Brown",
+      email: "charlie.brown@example.com",
+      passwordHash: "hashed_password_charlie",
+      role: "student",
+      firstName: "Charlie",
+      lastName: "Brown",
+      contactNumber: "111-222-3333"
+    },
+    {
+      id: "f7e8d9c0-b1a2-3b4c-5d6e-7f8a9b0c1d2e",
+      displayName: "Diana Prince",
+      email: "diana.prince@example.com",
+      passwordHash: "hashed_password_diana",
+      role: "supervisor",
+      firstName: "Diana",
+      lastName: "Prince",
+      contactNumber: "444-555-6666"
+    }
+  ]) {
+    id
+  }
+  studentProfile_insertMany(data: [
+    {
+      id: "c8e7b6a5-4d3c-2b1a-0f9e-8d7c6b5a4f3e",
+      userId: "b4e015d8-04f7-48f8-b391-7f02d4f3b6d2",
+      studentId: "S001",
+      program: "Computer Science",
+      major: "Software Engineering",
+      enrollmentDate: "2023-09-01"
+    },
+    {
+      id: "d2c1b0a9-8e7d-6c5b-4a3f-2e1d0c9b8a7f",
+      userId: "a1c2d3e4-f5g6-7h8i-9j0k-1l2m3n4o5p6q",
+      studentId: "S002",
+      program: "Electrical Engineering",
+      major: "Power Systems",
+      enrollmentDate: "2022-08-15"
+    }
+  ]) {
+    id
+  }
+  supervisorProfile_insertMany(data: [
+    {
+      id: "1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d",
+      userId: "e9f02c11-9e73-45f0-8c20-80a6b7d5a4b1",
+      employeeId: "E001",
+      department: "Engineering",
+      title: "Senior Engineer"
+    },
+    {
+      id: "2b3c4d5e-6f7a-8b9c-0d1e-2f3a4b5c6d7e",
+      userId: "f7e8d9c0-b1a2-3b4c-5d6e-7f8a9b0c1d2e",
+      employeeId: "E002",
+      department: "Human Resources",
+      title: "HR Manager"
+    }
+  ]) {
+    id
+  }
+  ojtAssignment_insertMany(data: [
+    {
+      studentId: "c8e7b6a5-4d3c-2b1a-0f9e-8d7c6b5a4f3e",
+      supervisorId: "1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d",
+      startDate: "2024-01-15",
+      status: "Active"
+    },
+    {
+      studentId: "d2c1b0a9-8e7d-6c5b-4a3f-2e1d0c9b8a7f",
+      supervisorId: "2b3c4d5e-6f7a-8b9c-0d1e-2f3a4b5c6d7e",
+      startDate: "2023-11-01",
+      status: "Completed",
+      endDate: "2024-02-28"
+    }
+  ]) {
+    id
+  }
+  timesheet_insertMany(data: [
+    {
+      studentId: "c8e7b6a5-4d3c-2b1a-0f9e-8d7c6b5a4f3e",
+      supervisorId: "1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d",
+      date: "2024-01-15",
+      startTime: "2024-01-15T09:00:00Z",
+      endTime: "2024-01-15T17:00:00Z",
+      hoursWorked: 8.0,
+      status: "Approved",
+      descriptionOfTasks: "Worked on frontend development."
+    },
+    {
+      studentId: "d2c1b0a9-8e7d-6c5b-4a3f-2e1d0c9b8a7f",
+      supervisorId: "2b3c4d5e-6f7a-8b9c-0d1e-2f3a4b5c6d7e",
+      date: "2023-11-05",
+      startTime: "2023-11-05T10:00:00Z",
+      endTime: "2023-11-05T18:00:00Z",
+      hoursWorked: 8.0,
+      status: "Pending",
+      descriptionOfTasks: "Reviewed HR policies."
+    }
+  ]) {
+    id
+  }
+}

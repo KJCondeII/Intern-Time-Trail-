@@ -1,0 +1,53 @@
+query ListAllStudentProfiles @auth(level: USER, insecureReason: "This operation is safe to expose to all logged in users.") {
+  studentProfiles {
+    id
+    studentId
+    program
+    major
+    enrollmentDate
+    user {
+      displayName
+      email
+    }
+  }
+}
+
+query GetMyTimesheets @auth(level: USER) {
+  timesheets(where: { student: { user: { id_expr: "auth.uid" } } }) {
+    id
+    date
+    startTime
+    endTime
+    hoursWorked
+    status
+    descriptionOfTasks
+    rejectionReason
+    supervisor {
+      user {
+        displayName
+      }
+    }
+  }
+}
+
+mutation CreateOjtAssignment($studentId: UUID!, $supervisorId: UUID!, $startDate: Date!, $status: String!) @auth(level: USER) {
+  ojtAssignment_insert(
+    data: {
+      studentId: $studentId
+      supervisorId: $supervisorId
+      startDate: $startDate
+      status: $status
+    }
+  ) {
+    id
+  }
+}
+
+mutation UpdateMySupervisorProfileTitle($title: String!) @auth(level: USER) {
+  supervisorProfile_update(
+    where: { user: { id_expr: "auth.uid" } }
+    data: { title: $title }
+  ) {
+    id
+  }
+}

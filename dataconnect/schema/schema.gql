@@ -1,0 +1,44 @@
+type User @table {
+  displayName: String!
+  email: String!
+  passwordHash: String!
+  role: String!
+  firstName: String
+  lastName: String
+  contactNumber: String
+}
+
+type StudentProfile @table {
+  user: User!
+  studentId: String!
+  program: String!
+  major: String
+  enrollmentDate: Date
+}
+
+type SupervisorProfile @table {
+  user: User!
+  employeeId: String!
+  department: String!
+  title: String
+}
+
+type Timesheet @table {
+  student: StudentProfile!
+  supervisor: SupervisorProfile
+  date: Date!
+  startTime: Timestamp!
+  endTime: Timestamp!
+  hoursWorked: Float!
+  status: String!
+  descriptionOfTasks: String
+  rejectionReason: String
+}
+
+type OjtAssignment @table {
+  student: StudentProfile!
+  supervisor: SupervisorProfile!
+  startDate: Date!
+  status: String!
+  endDate: Date
+}
