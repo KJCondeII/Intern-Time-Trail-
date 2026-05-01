@@ -17,13 +17,13 @@ const firebaseConfig = {
   storageBucket: "ojt-systems.firebasestorage.app",
   messagingSenderId: "697026632507",
   appId: "1:697026632507:web:b154d9d09c2335fd06751e"
-};
-const app = initializeApp(firebaseConfig);
+};const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'ojt-system-v2';
+// Safely format the App ID to prevent "Invalid collection reference" errors caused by slashes in the ID
+const appId = typeof __app_id !== 'undefined' ? __app_id.replace(/\//g, '-') : 'ojt-system-v2';
 
-// Safe offline persistence (ignored if already enabled)
+// Safe offline persistence
 try {
   enableIndexedDbPersistence(db).catch(() => {});
 } catch (e) {}
@@ -31,11 +31,30 @@ try {
 // Global paths
 const getPublicPath = (colName) => collection(db, 'artifacts', appId, 'public', 'data', colName);
 
+// --- Helpers ---
+const calculateHours = (inStr, outStr) => {
+  if (!inStr || !outStr) return 0;
+  try {
+    const parseTime = (str) => {
+      const [time, modifier] = str.split(' ');
+      let [hours, minutes] = time.split(':').map(Number);
+      if (hours === 12) hours = 0;
+      if (modifier === 'PM') hours += 12;
+      return hours + (minutes / 60);
+    };
+    const start = parseTime(inStr);
+    const end = parseTime(outStr);
+    return Math.max(0, end - start);
+  } catch (e) {
+    return 0;
+  }
+};
+
 // --- Custom Toast Component ---
 const Toast = ({ message, type, onClose }) => {
   if (!message) return null;
   return (
-    <div className={`fixed top-4 right-4 z-50 p-4 rounded-lg shadow-lg flex items-center gap-3 transition-all transform ${
+    <div className={`fixed top-4 right-4 z-[1000] p-4 rounded-lg shadow-lg flex items-center gap-3 transition-all transform ${
       type === 'error' ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-green-50 text-green-700 border border-green-200'
     }`}>
       {type === 'error' ? <AlertCircle size={20} /> : <CheckCircle2 size={20} />}
@@ -45,15 +64,19 @@ const Toast = ({ message, type, onClose }) => {
   );
 };
 
-// --- Main Application Component ---
+// ============================================================================
+// MAIN APPLICATION COMPONENT
+// ============================================================================
 export default function App() {
+  const [isAuthReady, setIsAuthReady] = useState(false);
   const [firebaseUser, setFirebaseUser] = useState(null);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   
-  // App State
+  // App State - Initialize from LocalStorage to prevent logout on refresh
+  const savedUser = JSON.parse(localStorage.getItem('ojt_user')) || null;
+  const [currentUser, setCurrentUser] = useState(savedUser); 
+  const [view, setView] = useState(savedUser ? (savedUser.role === 'superadmin' ? 'superadmin' : savedUser.role) : 'login'); 
   const [toast, setToast] = useState(null);
-  const [view, setView] = useState('login'); // login, intern, director, superadmin
-  const [currentUser, setCurrentUser] = useState(null); // The logical user
   
   // Data State
   const [allUsers, setAllUsers] = useState([]);
@@ -65,16 +88,14 @@ export default function App() {
     setTimeout(() => setToast(null), 4000);
   };
 
-  // --- Initial Setup & Listeners ---
+  // Initial Setup & Listeners
   useEffect(() => {
-    // Inject QR Libraries
-    const script1 = document.createElement('script');
-    script1.src = 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js';
-    document.head.appendChild(script1);
-
-    const script2 = document.createElement('script');
-    script2.src = 'https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js';
-    document.head.appendChild(script2);
+    // Inject QR Library
+    if (!window.jsQR) {
+      const script1 = document.createElement('script');
+      script1.src = 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js';
+      document.head.appendChild(script1);
+    }
 
     // Network status
     const handleOnline = () => setIsOnline(true);
@@ -92,6 +113,8 @@ export default function App() {
         }
       } catch (err) {
         console.error("Auth error:", err);
+      } finally {
+        setIsAuthReady(true);
       }
     };
     initAuth();
@@ -107,55 +130,62 @@ export default function App() {
     };
   }, []);
 
-  // --- Data Fetching ---
+  // Data Fetching
   useEffect(() => {
-    if (!firebaseUser) return;
+    // Guard queries strictly behind fully ready authentication to prevent permission errors
+    if (!isAuthReady || !firebaseUser) return;
 
     const unsubOffices = onSnapshot(getPublicPath('offices'), (snap) => {
       setAllOffices(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    }, (err) => console.error(err));
+    }, (err) => console.error("Offices query error:", err));
 
     const unsubUsers = onSnapshot(getPublicPath('users'), (snap) => {
       setAllUsers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    }, (err) => console.error(err));
+    }, (err) => console.error("Users query error:", err));
 
     const unsubLogs = onSnapshot(getPublicPath('attendance'), (snap) => {
       setAllLogs(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    }, (err) => console.error(err));
+    }, (err) => console.error("Logs query error:", err));
 
     return () => {
       unsubOffices();
       unsubUsers();
       unsubLogs();
     };
-  }, [firebaseUser]);
+  }, [isAuthReady, firebaseUser]);
 
-
-  // --- Routing Logic ---
+  // Routing Logic
   const handleLoginSuccess = (user) => {
     setCurrentUser(user);
+    localStorage.setItem('ojt_user', JSON.stringify(user)); // Save session locally
     if (user.role === 'superadmin') setView('superadmin');
     else if (user.role === 'director') setView('director');
     else setView('intern');
   };
 
-  const handleLogout = () => {
-    setCurrentUser(null);
-    setView('login');
+  const handleLogout = async () => {
+    try {
+      await auth.signOut();
+      localStorage.removeItem('ojt_user'); // Clear session
+      sessionStorage.clear();
+      setCurrentUser(null);
+      setView('login');
+    } catch (error) {
+      showToast("Error logging out", "error");
+    }
   };
 
-  // Derive the live active user from the snapshot feed to ensure data (like office code) is always fresh
-  const activeUser = currentUser ? (allUsers.find(u => u.id === currentUser.id) || currentUser) : null;
+  // Derive active user from fresh data feed, fallback to cached localStorage user if data hasn't loaded yet
+  const activeUser = currentUser ? (allUsers.find(u => u.id === currentUser.id || u.studentId === currentUser.studentId || u.email === currentUser.email) || currentUser) : null;
 
-  if (!firebaseUser) {
+  if (!isAuthReady || !firebaseUser) {
     return <div className="min-h-screen flex items-center justify-center bg-slate-50"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-slate-900"></div></div>;
   }
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 font-sans selection:bg-slate-200">
-      {/* Network Indicator */}
       {!isOnline && (
-        <div className="fixed top-0 left-0 right-0 bg-amber-500 text-white text-xs text-center py-1 z-50 flex items-center justify-center gap-2">
+        <div className="fixed top-0 left-0 right-0 bg-amber-500 text-white text-xs text-center py-1 z-[100] flex items-center justify-center gap-2">
           <WifiOff size={14} /> You are offline. Changes will sync when connected.
         </div>
       )}
@@ -207,20 +237,18 @@ export default function App() {
 // LOGIN & REGISTRATION VIEW
 // ============================================================================
 function LoginView({ allUsers, allOffices, onLogin, showToast }) {
-  const [activeTab, setActiveTab] = useState('login'); // login, registerIntern, registerOffice
+  const [activeTab, setActiveTab] = useState('intern'); 
+  const [regModal, setRegModal] = useState(null); 
   
-  // Login Form
   const [loginId, setLoginId] = useState('');
   const [loginPass, setLoginPass] = useState('');
 
-  // Intern Reg Form
   const [regName, setRegName] = useState('');
   const [regId, setRegId] = useState('');
   const [regEmail, setRegEmail] = useState('');
   const [regCode, setRegCode] = useState('');
   const [regPass, setRegPass] = useState('');
 
-  // Office Reg Form
   const [offDirector, setOffDirector] = useState('');
   const [offName, setOffName] = useState('');
   const [offEmail, setOffEmail] = useState('');
@@ -228,18 +256,22 @@ function LoginView({ allUsers, allOffices, onLogin, showToast }) {
 
   const handleLogin = (e) => {
     e.preventDefault();
-    // Super Admin hardcode
     if (loginId === 'admin' && loginPass === 'admin123') {
       onLogin({ role: 'superadmin', id: 'admin', name: 'Super Administrator' });
       return;
     }
 
-    // Normal User Check
     const user = allUsers.find(u => 
       (u.studentId === loginId || u.email === loginId) && u.password === loginPass
     );
 
     if (user) {
+      if (activeTab === 'intern' && user.role !== 'intern') {
+        return showToast("Please use the Director Login tab.", "error");
+      }
+      if (activeTab === 'director' && user.role !== 'director') {
+        return showToast("Please use the Intern Login tab.", "error");
+      }
       onLogin(user);
     } else {
       showToast("Invalid ID/Email or Password", "error");
@@ -248,7 +280,6 @@ function LoginView({ allUsers, allOffices, onLogin, showToast }) {
 
   const handleRegisterIntern = async (e) => {
     e.preventDefault();
-    // Check if code is valid
     const office = allOffices.find(o => o.officeCode === regCode);
     if (!office) return showToast("Invalid Office Code.", "error");
     if (allUsers.find(u => u.studentId === regId)) return showToast("Student ID already registered.", "error");
@@ -267,7 +298,8 @@ function LoginView({ allUsers, allOffices, onLogin, showToast }) {
     try {
       await setDoc(doc(getPublicPath('users'), regId), newIntern);
       showToast("Registration successful! Waiting for director approval.");
-      setActiveTab('login');
+      setRegModal(null);
+      setActiveTab('intern');
       setLoginId(regId);
     } catch (err) {
       showToast("Error registering.", "error");
@@ -296,6 +328,8 @@ function LoginView({ allUsers, allOffices, onLogin, showToast }) {
       directorEmail: offEmail,
       officeCode: newCode,
       isActive: true,
+      targetOjtHours: 500,
+      requiredDailyHours: 8,
       createdAt: new Date().toISOString()
     };
 
@@ -303,7 +337,8 @@ function LoginView({ allUsers, allOffices, onLogin, showToast }) {
       await setDoc(doc(getPublicPath('users'), offEmail), newDirector);
       await setDoc(doc(getPublicPath('offices'), officeId), newOffice);
       showToast(`Office Registered! Your Code is ${newCode}`);
-      setActiveTab('login');
+      setRegModal(null);
+      setActiveTab('director');
       setLoginId(offEmail);
     } catch (err) {
       showToast("Error creating office.", "error");
@@ -311,7 +346,7 @@ function LoginView({ allUsers, allOffices, onLogin, showToast }) {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4">
+    <div className="min-h-screen flex items-center justify-center p-4 bg-slate-50">
       <div className="w-full max-w-md bg-white rounded-2xl shadow-xl overflow-hidden border border-slate-100">
         <div className="bg-slate-900 p-8 text-center relative overflow-hidden">
           <div className="absolute top-0 right-0 p-4 opacity-10">
@@ -323,52 +358,78 @@ function LoginView({ allUsers, allOffices, onLogin, showToast }) {
           </div>
         </div>
 
-        {/* TABS */}
-        <div className="flex border-b border-slate-100 text-sm font-medium">
+        {/* Simplified Login Tabs */}
+        <div className="flex border-b border-slate-100 text-sm font-medium bg-slate-50/50">
           <button 
-            className={`flex-1 py-3 transition-colors ${activeTab === 'login' ? 'text-slate-900 border-b-2 border-slate-900' : 'text-slate-400 hover:text-slate-600'}`}
-            onClick={() => setActiveTab('login')}
-          >
-            Sign In
-          </button>
+            className={`flex-1 py-3.5 transition-colors ${activeTab === 'intern' ? 'text-slate-900 border-b-2 border-slate-900 bg-white' : 'text-slate-400 hover:text-slate-600'}`}
+            onClick={() => { setActiveTab('intern'); setLoginId(''); setLoginPass(''); }}
+          >Intern Login</button>
           <button 
-            className={`flex-1 py-3 transition-colors ${activeTab === 'registerIntern' ? 'text-slate-900 border-b-2 border-slate-900' : 'text-slate-400 hover:text-slate-600'}`}
-            onClick={() => setActiveTab('registerIntern')}
-          >
-            Student Reg.
-          </button>
-          <button 
-            className={`flex-1 py-3 transition-colors ${activeTab === 'registerOffice' ? 'text-slate-900 border-b-2 border-slate-900' : 'text-slate-400 hover:text-slate-600'}`}
-            onClick={() => setActiveTab('registerOffice')}
-          >
-            Office Reg.
-          </button>
+            className={`flex-1 py-3.5 transition-colors ${activeTab === 'director' ? 'text-slate-900 border-b-2 border-slate-900 bg-white' : 'text-slate-400 hover:text-slate-600'}`}
+            onClick={() => { setActiveTab('director'); setLoginId(''); setLoginPass(''); }}
+          >Director Login</button>
         </div>
 
         <div className="p-8">
-          {activeTab === 'login' && (
-            <form onSubmit={handleLogin} className="space-y-4">
-              <div>
-                <label className="block text-xs font-medium text-slate-500 uppercase tracking-wider mb-1">Student ID or Email</label>
-                <div className="relative">
-                  <User className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                  <input type="text" required value={loginId} onChange={(e)=>setLoginId(e.target.value)} className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-transparent text-sm" placeholder="Enter ID or Email" />
-                </div>
+          <form onSubmit={handleLogin} className="space-y-4">
+            <div>
+              <label className="block text-xs font-medium text-slate-500 uppercase tracking-wider mb-1">
+                {activeTab === 'intern' ? 'Student ID' : 'Office Email'}
+              </label>
+              <div className="relative">
+                <User className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                <input 
+                  type="text" 
+                  required 
+                  value={loginId} 
+                  onChange={(e) => setLoginId(e.target.value)} 
+                  className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-900 text-sm" 
+                  placeholder={activeTab === 'intern' ? "Enter your Student ID" : "Enter director email"} 
+                />
               </div>
-              <div>
-                <label className="block text-xs font-medium text-slate-500 uppercase tracking-wider mb-1">Password</label>
-                <div className="relative">
-                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                  <input type="password" required value={loginPass} onChange={(e)=>setLoginPass(e.target.value)} className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-transparent text-sm" placeholder="••••••••" />
-                </div>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-500 uppercase tracking-wider mb-1">Password</label>
+              <div className="relative">
+                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                <input 
+                  type="password" 
+                  required 
+                  value={loginPass} 
+                  onChange={(e) => setLoginPass(e.target.value)} 
+                  className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-900 text-sm" 
+                  placeholder="••••••••" 
+                />
               </div>
-              <button type="submit" className="w-full bg-slate-900 hover:bg-slate-800 text-white font-medium py-2 rounded-lg transition-colors mt-6 text-sm flex items-center justify-center gap-2">
-                Sign In <LogIn size={16} />
-              </button>
-            </form>
-          )}
+            </div>
+            <button type="submit" className="w-full bg-slate-900 hover:bg-slate-800 text-white font-medium py-2 rounded-lg transition-colors mt-6 text-sm flex items-center justify-center gap-2 shadow-sm">
+              Sign In <LogIn size={16} />
+            </button>
+          </form>
 
-          {activeTab === 'registerIntern' && (
+          {/* Registration Links */}
+          <div className="mt-8 text-center border-t border-slate-100 pt-6">
+            {activeTab === 'intern' ? (
+              <p className="text-sm text-slate-500">
+                New intern? <button type="button" onClick={() => setRegModal('intern')} className="text-blue-600 font-semibold hover:underline">Register here</button>
+              </p>
+            ) : (
+              <p className="text-sm text-slate-500">
+                New office? <button type="button" onClick={() => setRegModal('director')} className="text-blue-600 font-semibold hover:underline">Register office</button>
+              </p>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* REGISTRATION MODALS */}
+      {regModal === 'intern' && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden shadow-2xl p-6">
+            <div className="flex justify-between items-center mb-6 border-b border-slate-100 pb-4">
+              <h3 className="font-bold text-lg text-slate-900">Student Registration</h3>
+              <button onClick={() => setRegModal(null)}><X size={20} className="text-slate-400 hover:text-slate-600" /></button>
+            </div>
             <form onSubmit={handleRegisterIntern} className="space-y-4">
               <div>
                 <label className="block text-xs font-medium text-slate-500 uppercase tracking-wider mb-1">Office Code (From Director)</label>
@@ -392,11 +453,19 @@ function LoginView({ allUsers, allOffices, onLogin, showToast }) {
                 <label className="block text-xs font-medium text-slate-500 uppercase tracking-wider mb-1">Create Password</label>
                 <input type="password" required value={regPass} onChange={(e)=>setRegPass(e.target.value)} className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-slate-900 text-sm" placeholder="••••••••" />
               </div>
-              <button type="submit" className="w-full bg-slate-900 hover:bg-slate-800 text-white font-medium py-2 rounded-lg transition-colors mt-2 text-sm">Register as Intern</button>
+              <button type="submit" className="w-full bg-slate-900 hover:bg-slate-800 text-white font-medium py-2 rounded-lg transition-colors mt-4 text-sm shadow-sm">Submit Registration</button>
             </form>
-          )}
+          </div>
+        </div>
+      )}
 
-          {activeTab === 'registerOffice' && (
+      {regModal === 'director' && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden shadow-2xl p-6">
+            <div className="flex justify-between items-center mb-6 border-b border-slate-100 pb-4">
+              <h3 className="font-bold text-lg text-slate-900">Office Registration</h3>
+              <button onClick={() => setRegModal(null)}><X size={20} className="text-slate-400 hover:text-slate-600" /></button>
+            </div>
             <form onSubmit={handleRegisterOffice} className="space-y-4">
               <div>
                 <label className="block text-xs font-medium text-slate-500 uppercase tracking-wider mb-1">Office / Dept Name</label>
@@ -414,11 +483,11 @@ function LoginView({ allUsers, allOffices, onLogin, showToast }) {
                 <label className="block text-xs font-medium text-slate-500 uppercase tracking-wider mb-1">Create Password</label>
                 <input type="password" required value={offPass} onChange={(e)=>setOffPass(e.target.value)} className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-slate-900 text-sm" placeholder="••••••••" />
               </div>
-              <button type="submit" className="w-full bg-slate-900 hover:bg-slate-800 text-white font-medium py-2 rounded-lg transition-colors mt-2 text-sm">Register Office</button>
+              <button type="submit" className="w-full bg-slate-900 hover:bg-slate-800 text-white font-medium py-2 rounded-lg transition-colors mt-4 text-sm shadow-sm">Register New Office</button>
             </form>
-          )}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -430,10 +499,10 @@ function SuperAdminView({ allOffices, allUsers, allLogs, onLogout, showToast }) 
   const activeOffices = allOffices.length;
   const totalInterns = allUsers.filter(u => u.role === 'intern').length;
   const pendingInterns = allUsers.filter(u => u.role === 'intern' && u.status === 'pending').length;
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = new Date().toLocaleDateString('en-CA');
   const logsToday = allLogs.filter(l => l.date === todayStr).length;
 
-  const handleDeleteOffice = async (officeId, code) => {
+  const handleDeleteOffice = async (officeId) => {
     try {
       await deleteDoc(doc(getPublicPath('offices'), officeId));
       showToast("Office deleted successfully.", "success");
@@ -496,7 +565,7 @@ function SuperAdminView({ allOffices, allUsers, allLogs, onLogout, showToast }) 
                   <td className="px-6 py-4"><span className="px-2 py-1 bg-slate-100 text-slate-700 font-mono text-xs rounded border border-slate-200">{office.officeCode}</span></td>
                   <td className="px-6 py-4 text-slate-600">{allUsers.filter(u => u.officeCode === office.officeCode && u.role === 'intern').length}</td>
                   <td className="px-6 py-4 text-right">
-                    <button onClick={() => handleDeleteOffice(office.id, office.officeCode)} className="p-1.5 text-red-500 hover:bg-red-50 rounded transition-colors" title="Delete Office">
+                    <button onClick={() => handleDeleteOffice(office.id)} className="p-1.5 text-red-500 hover:bg-red-50 rounded transition-colors" title="Delete Office">
                       <Trash2 size={16} />
                     </button>
                   </td>
@@ -514,27 +583,6 @@ function SuperAdminView({ allOffices, allUsers, allLogs, onLogout, showToast }) 
 }
 
 // ============================================================================
-// HELPER: TIME CALCULATION
-// ============================================================================
-const calculateHours = (inStr, outStr) => {
-  if (!inStr || !outStr) return 0;
-  try {
-    const parseTime = (str) => {
-      const [time, modifier] = str.split(' ');
-      let [hours, minutes] = time.split(':').map(Number);
-      if (hours === 12) hours = 0;
-      if (modifier === 'PM') hours += 12;
-      return hours + (minutes / 60);
-    };
-    const start = parseTime(inStr);
-    const end = parseTime(outStr);
-    return Math.max(0, end - start);
-  } catch (e) {
-    return 0;
-  }
-};
-
-// ============================================================================
 // DIRECTOR VIEW
 // ============================================================================
 function DirectorView({ currentUser, allUsers, allLogs, allOffices, onLogout, showToast }) {
@@ -547,44 +595,18 @@ function DirectorView({ currentUser, allUsers, allLogs, allOffices, onLogout, sh
   const approvedInterns = myInterns.filter(u => u.status === 'approved');
   const myLogs = allLogs.filter(l => l.officeCode === currentUser.officeCode);
 
-  const requiredDailyHours = office?.requiredDailyHours || 8;
-  const [reqHoursInput, setReqHoursInput] = useState(requiredDailyHours);
+  const [targetHoursInput, setTargetHoursInput] = useState(office?.targetOjtHours || 500);
 
-  useEffect(() => {
-    setReqHoursInput(office?.requiredDailyHours || 8);
-  }, [office?.requiredDailyHours]);
-
-  const handleSaveRequiredHours = async () => {
+  const handleSaveSettings = async () => {
     try {
-      await setDoc(doc(getPublicPath('offices'), office.id), { requiredDailyHours: Number(reqHoursInput) }, { merge: true });
-      showToast("Required daily hours updated.");
-    } catch(err) { showToast("Error updating hours.", "error"); }
-  };
-
-  // --- Analytics Data Prep ---
-  const internAnalytics = approvedInterns.map(intern => {
-    const logs = myLogs.filter(l => l.studentId === intern.studentId);
-    const totalDays = logs.length;
-    
-    let totalRegHours = 0;
-    let totalOTHours = 0;
-
-    logs.forEach(log => {
-      const amHrs = calculateHours(log.amIn, log.amOut);
-      const pmHrs = calculateHours(log.pmIn, log.pmOut);
-      const dailyTotal = amHrs + pmHrs;
-      
-      if (dailyTotal > requiredDailyHours) {
-        totalRegHours += requiredDailyHours;
-        totalOTHours += (dailyTotal - requiredDailyHours);
-      } else {
-        totalRegHours += dailyTotal;
+      if (office?.id) {
+        await setDoc(doc(getPublicPath('offices'), office.id), { 
+          targetOjtHours: Number(targetHoursInput) 
+        }, { merge: true });
+        showToast("Hours settings saved.");
       }
-    });
-
-    const latestLog = logs.sort((a,b) => new Date(b.date) - new Date(a.date))[0]?.date || 'N/A';
-    return { ...intern, totalDays, totalRegHours, totalOTHours, latestLog };
-  });
+    } catch(err) { showToast("Error saving.", "error"); }
+  };
 
   const handleApprove = async (internId) => {
     try {
@@ -605,11 +627,36 @@ function DirectorView({ currentUser, allUsers, allLogs, allOffices, onLogout, sh
     if (!confirm) return;
     const newCode = 'OJT-' + Math.random().toString(36).substring(2, 6).toUpperCase();
     try {
-      await setDoc(doc(getPublicPath('offices'), currentUser.officeId), { officeCode: newCode }, { merge: true });
+      if (currentUser.officeId) {
+        await setDoc(doc(getPublicPath('offices'), currentUser.officeId), { officeCode: newCode }, { merge: true });
+      }
       await setDoc(doc(getPublicPath('users'), currentUser.email), { officeCode: newCode }, { merge: true });
       showToast(`New code generated: ${newCode}`);
     } catch(err) { showToast("Error regenerating code.", "error"); }
   };
+
+  const internAnalytics = approvedInterns.map(intern => {
+    const logs = myLogs.filter(l => l.studentId === intern.studentId);
+    let totalRenderedHours = 0;
+
+    logs.forEach(log => {
+      const amHrs = calculateHours(log.amIn, log.amOut);
+      const pmHrs = calculateHours(log.pmIn, log.pmOut);
+      totalRenderedHours += (amHrs + pmHrs);
+    });
+
+    const target = office?.targetOjtHours || 500;
+    const progressPercent = Math.min(100, (totalRenderedHours / target) * 100);
+    const isPresentToday = logs.some(l => l.date === new Date().toLocaleDateString('en-CA'));
+
+    return { 
+      ...intern, 
+      totalRenderedHours, 
+      progressPercent,
+      target,
+      isPresentToday
+    };
+  });
 
   return (
     <div className="max-w-6xl mx-auto p-4 sm:p-6 lg:p-8">
@@ -634,146 +681,159 @@ function DirectorView({ currentUser, allUsers, allLogs, allOffices, onLogout, sh
         </div>
       </div>
 
-      {/* Tabs */}
       <div className="flex border-b border-slate-200 mb-8">
         <button 
           className={`px-6 py-3 text-sm font-medium transition-colors ${activeTab === 'dashboard' ? 'border-b-2 border-slate-900 text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
           onClick={() => setActiveTab('dashboard')}
         >
-          <div className="flex items-center gap-2"><Clock size={16} /> Activity Dashboard</div>
+          <div className="flex items-center gap-2"><Clock size={16} /> Activity Logs</div>
         </button>
         <button 
           className={`px-6 py-3 text-sm font-medium transition-colors ${activeTab === 'analytics' ? 'border-b-2 border-slate-900 text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
           onClick={() => setActiveTab('analytics')}
         >
-          <div className="flex items-center gap-2"><BarChart3 size={16} /> Intern Analysis</div>
+          <div className="flex items-center gap-2"><BarChart3 size={16} /> Intern Progress Tracking</div>
         </button>
       </div>
 
       {activeTab === 'dashboard' && (
         <>
-      {/* Pending Approvals */}
-      {pendingInterns.length > 0 && (
-        <div className="mb-8 bg-amber-50 rounded-xl border border-amber-200 overflow-hidden shadow-sm">
-          <div className="px-6 py-4 border-b border-amber-200 bg-amber-100/50 flex items-center gap-2">
-            <AlertCircle size={18} className="text-amber-600" />
-            <h2 className="text-base font-semibold text-amber-900">Pending Intern Approvals ({pendingInterns.length})</h2>
-          </div>
-          <div className="p-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {pendingInterns.map(intern => (
-              <div key={intern.id} className="bg-white p-4 rounded-lg border border-amber-200 flex flex-col justify-between">
-                <div>
-                  <p className="font-semibold text-slate-900">{intern.name}</p>
-                  <p className="text-xs text-slate-500 font-mono">{intern.studentId} • {intern.email}</p>
-                </div>
-                <div className="flex gap-2 mt-4">
-                  <button onClick={() => handleApprove(intern.id)} className="flex-1 bg-green-600 hover:bg-green-700 text-white text-xs font-medium py-1.5 rounded transition-colors flex items-center justify-center gap-1"><Check size={14}/> Approve</button>
-                  <button onClick={() => handleReject(intern.id)} className="flex-1 bg-red-50 hover:bg-red-100 text-red-600 text-xs font-medium py-1.5 rounded transition-colors flex items-center justify-center gap-1"><X size={14}/> Reject</button>
-                </div>
+          {pendingInterns.length > 0 && (
+            <div className="mb-8 bg-amber-50 rounded-xl border border-amber-200 overflow-hidden shadow-sm">
+              <div className="px-6 py-4 border-b border-amber-200 bg-amber-100/50 flex items-center gap-2">
+                <AlertCircle size={18} className="text-amber-600" />
+                <h2 className="text-base font-semibold text-amber-900">Pending Intern Approvals ({pendingInterns.length})</h2>
               </div>
-            ))}
-          </div>
-        </div>
-      )}
+              <div className="p-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {pendingInterns.map(intern => (
+                  <div key={intern.id} className="bg-white p-4 rounded-lg border border-amber-200 flex flex-col justify-between">
+                    <div>
+                      <p className="font-semibold text-slate-900">{intern.name}</p>
+                      <p className="text-xs text-slate-500 font-mono">{intern.studentId} • {intern.email}</p>
+                    </div>
+                    <div className="flex gap-2 mt-4">
+                      <button onClick={() => handleApprove(intern.id)} className="flex-1 bg-green-600 hover:bg-green-700 text-white text-xs font-medium py-1.5 rounded transition-colors flex items-center justify-center gap-1"><Check size={14}/> Approve</button>
+                      <button onClick={() => handleReject(intern.id)} className="flex-1 bg-red-50 hover:bg-red-100 text-red-600 text-xs font-medium py-1.5 rounded transition-colors flex items-center justify-center gap-1"><X size={14}/> Reject</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
-      {/* Attendance Logs Table */}
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-        <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
-          <h2 className="text-base font-semibold text-slate-900">Attendance Records</h2>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm whitespace-nowrap">
-            <thead className="bg-slate-50 text-slate-500">
-              <tr>
-                <th className="px-6 py-3 font-medium">Date</th>
-                <th className="px-6 py-3 font-medium">Intern</th>
-                <th className="px-6 py-3 font-medium">AM In</th>
-                <th className="px-6 py-3 font-medium">AM Out</th>
-                <th className="px-6 py-3 font-medium">PM In</th>
-                <th className="px-6 py-3 font-medium">PM Out</th>
-                <th className="px-6 py-3 font-medium">Selfies</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {myLogs.sort((a,b) => new Date(b.date) - new Date(a.date)).map(log => {
-                const intern = approvedInterns.find(u => u.studentId === log.studentId) || { name: 'Unknown' };
-                return (
-                  <tr key={log.id} className="hover:bg-slate-50 transition-colors">
-                    <td className="px-6 py-4 text-slate-500 font-mono text-xs">{log.date}</td>
-                    <td className="px-6 py-4 font-medium text-slate-900">{intern.name}</td>
-                    <td className="px-6 py-4">{log.amIn || '-'}</td>
-                    <td className="px-6 py-4">{log.amOut || '-'}</td>
-                    <td className="px-6 py-4">{log.pmIn || '-'}</td>
-                    <td className="px-6 py-4">{log.pmOut || '-'}</td>
-                    <td className="px-6 py-4">
-                       <div className="flex gap-1">
-                          {[log.amInPhoto, log.amOutPhoto, log.pmInPhoto, log.pmOutPhoto].map((photo, i) => photo ? (
-                            <img key={i} src={photo} alt="Selfie" className="w-8 h-8 rounded border border-slate-200 object-cover" />
-                          ) : null)}
-                       </div>
-                    </td>
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+            <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
+              <h2 className="text-base font-semibold text-slate-900">Attendance Records</h2>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm whitespace-nowrap">
+                <thead className="bg-slate-50 text-slate-500">
+                  <tr>
+                    <th className="px-6 py-3 font-medium">Date</th>
+                    <th className="px-6 py-3 font-medium">Intern</th>
+                    <th className="px-6 py-3 font-medium">AM In</th>
+                    <th className="px-6 py-3 font-medium">AM Out</th>
+                    <th className="px-6 py-3 font-medium">PM In</th>
+                    <th className="px-6 py-3 font-medium">PM Out</th>
+                    <th className="px-6 py-3 font-medium">Photos</th>
                   </tr>
-                );
-              })}
-              {myLogs.length === 0 && <tr><td colSpan="7" className="px-6 py-8 text-center text-slate-500">No attendance records found.</td></tr>}
-            </tbody>
-          </table>
-        </div>
-      </div>
-      </>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {myLogs.sort((a,b) => new Date(b.date) - new Date(a.date)).map(log => {
+                    const intern = approvedInterns.find(u => u.studentId === log.studentId) || { name: log.studentId };
+                    return (
+                      <tr key={log.id} className="hover:bg-slate-50 transition-colors">
+                        <td className="px-6 py-4 text-slate-500 font-mono text-xs">{log.date}</td>
+                        <td className="px-6 py-4 font-medium text-slate-900">{intern.name}</td>
+                        <td className="px-6 py-4">{log.amIn || '-'}</td>
+                        <td className="px-6 py-4">{log.amOut || '-'}</td>
+                        <td className="px-6 py-4">{log.pmIn || '-'}</td>
+                        <td className="px-6 py-4">{log.pmOut || '-'}</td>
+                        <td className="px-6 py-4">
+                           <div className="flex gap-1">
+                              {[log.amInPhoto, log.amOutPhoto, log.pmInPhoto, log.pmOutPhoto].map((photo, i) => photo ? (
+                                <img key={i} src={photo} alt="Selfie" className="w-8 h-8 rounded border border-slate-200 object-cover" />
+                              ) : null)}
+                           </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {myLogs.length === 0 && <tr><td colSpan="7" className="px-6 py-8 text-center text-slate-500">No attendance records found.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
       )}
 
       {activeTab === 'analytics' && (
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-          <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-            <h2 className="text-base font-semibold text-slate-900">Intern Performance Analysis</h2>
-            <div className="flex items-center gap-2">
-              <label className="text-xs font-medium text-slate-500 whitespace-nowrap">Req. Daily Hours:</label>
+        <div className="space-y-6">
+          <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <h2 className="font-semibold text-slate-900">Intern Progress Tracker</h2>
+              <p className="text-sm text-slate-500">Monitor total hours rendered by each student.</p>
+            </div>
+            <div className="flex items-center gap-3">
+              <label className="text-sm font-medium text-slate-700">Target OJT Hours:</label>
               <input 
                 type="number" 
-                min="1" max="24" step="0.5" 
-                value={reqHoursInput} 
-                onChange={e => setReqHoursInput(e.target.value)} 
-                className="w-16 px-2 py-1 text-sm border border-slate-200 rounded focus:ring-2 focus:ring-slate-900 outline-none" 
+                value={targetHoursInput} 
+                onChange={e => setTargetHoursInput(e.target.value)} 
+                className="w-24 px-3 py-1.5 border border-slate-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-slate-900" 
               />
               <button 
-                onClick={handleSaveRequiredHours} 
-                className="px-3 py-1 bg-slate-900 text-white text-xs font-medium rounded hover:bg-slate-800 transition-colors"
+                onClick={handleSaveSettings} 
+                className="bg-slate-900 text-white px-4 py-1.5 rounded-lg text-sm font-medium hover:bg-slate-800"
               >
                 Save
               </button>
             </div>
           </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm whitespace-nowrap">
-              <thead className="bg-slate-50 text-slate-500">
-                <tr>
-                  <th className="px-6 py-3 font-medium">Intern Name</th>
-                  <th className="px-6 py-3 font-medium">Student ID</th>
-                  <th className="px-6 py-3 font-medium text-center">Days Present</th>
-                  <th className="px-6 py-3 font-medium text-center">Reg. Hours</th>
-                  <th className="px-6 py-3 font-medium text-center">Overtime</th>
-                  <th className="px-6 py-3 font-medium">Latest Activity</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {internAnalytics.map(stat => (
-                  <tr key={stat.id} className="hover:bg-slate-50 transition-colors">
-                    <td className="px-6 py-4 font-medium text-slate-900">{stat.name}</td>
-                    <td className="px-6 py-4 text-slate-500 font-mono text-xs">{stat.studentId}</td>
-                    <td className="px-6 py-4 text-center">
-                      <span className="inline-flex items-center justify-center px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700 font-medium">{stat.totalDays}</span>
-                    </td>
-                    <td className="px-6 py-4 text-center text-slate-600 font-semibold">{stat.totalRegHours.toFixed(2)}h</td>
-                    <td className="px-6 py-4 text-center text-emerald-600 font-semibold">
-                      {stat.totalOTHours > 0 ? `+${stat.totalOTHours.toFixed(2)}h` : '-'}
-                    </td>
-                    <td className="px-6 py-4 text-slate-500 text-xs">{stat.latestLog}</td>
-                  </tr>
-                ))}
-                {internAnalytics.length === 0 && <tr><td colSpan="6" className="px-6 py-8 text-center text-slate-500">No approved interns to analyze.</td></tr>}
-              </tbody>
-            </table>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {internAnalytics.map(intern => (
+              <div key={intern.id} className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 flex flex-col relative overflow-hidden">
+                <div className={`absolute top-4 right-4 flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full ${intern.isPresentToday ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-500'}`}>
+                  <div className={`w-2 h-2 rounded-full ${intern.isPresentToday ? 'bg-emerald-500' : 'bg-slate-400'}`}></div>
+                  {intern.isPresentToday ? 'Present Today' : 'Absent/Offline'}
+                </div>
+
+                <div className="flex items-center gap-4 mb-5 mt-2">
+                  <div className="w-14 h-14 bg-slate-100 rounded-full flex items-center justify-center border border-slate-200 shrink-0">
+                    <User size={24} className="text-slate-400" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-slate-900 leading-tight">{intern.name}</h3>
+                    <p className="text-sm text-slate-500 font-mono mt-0.5">{intern.studentId}</p>
+                  </div>
+                </div>
+
+                <div className="mt-auto pt-4 border-t border-slate-100">
+                  <div className="flex justify-between text-sm mb-2">
+                    <span className="font-medium text-slate-700">{intern.totalRenderedHours.toFixed(1)} hrs</span>
+                    <span className="text-slate-500">/ {intern.target} hrs</span>
+                  </div>
+                  
+                  <div className="w-full h-2.5 bg-slate-100 rounded-full overflow-hidden">
+                    <div 
+                      className={`h-full rounded-full transition-all duration-500 ${intern.progressPercent >= 100 ? 'bg-emerald-500' : 'bg-blue-600'}`}
+                      style={{ width: `${intern.progressPercent}%` }}
+                    ></div>
+                  </div>
+                  
+                  <div className="mt-2 text-right text-xs font-semibold text-blue-600">
+                    {intern.progressPercent.toFixed(1)}% Completed
+                  </div>
+                </div>
+              </div>
+            ))}
+
+            {internAnalytics.length === 0 && (
+              <div className="col-span-full p-8 text-center bg-white rounded-xl border border-dashed border-slate-300 text-slate-500">
+                No approved interns to track yet.
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -783,20 +843,14 @@ function DirectorView({ currentUser, allUsers, allLogs, allOffices, onLogout, sh
   );
 }
 
-// --- QR Generator Modal (Includes Print Layout) ---
+// --- QR Generator Modal ---
 function QRGeneratorModal({ officeCode, onClose }) {
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = new Date().toLocaleDateString('en-CA');
   const qrString = `OJT-QR|${officeCode}|${todayStr}`;
-  // Use a reliable image API instead of relying on external scripts and canvas drawing
   const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(qrString)}`;
 
-  const handlePrint = () => {
-    window.print();
-  };
-
   return (
-    <div className="fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4">
-      {/* Hide this container during printing */}
+    <div className="fixed inset-0 bg-slate-900/60 z-[1000] flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-2xl max-w-sm w-full overflow-hidden print:hidden">
         <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
           <h3 className="font-semibold text-slate-900">Daily Attendance QR</h3>
@@ -808,14 +862,13 @@ function QRGeneratorModal({ officeCode, onClose }) {
             <img src={qrImageUrl} alt="Daily QR Code" className="w-[200px] h-[200px] object-contain" />
           </div>
           <div className="text-center font-mono text-xs text-slate-400 mb-6">{todayStr}</div>
-          <button onClick={handlePrint} className="w-full bg-slate-900 hover:bg-slate-800 text-white font-medium py-2.5 rounded-lg transition-colors flex items-center justify-center gap-2">
+          <button onClick={() => window.print()} className="w-full bg-slate-900 hover:bg-slate-800 text-white font-medium py-2.5 rounded-lg transition-colors flex items-center justify-center gap-2">
             <Printer size={18} /> Print / Save PDF
           </button>
         </div>
       </div>
 
-      {/* Printable Area (Only visible when printing) */}
-      <div className="hidden print:flex flex-col items-center justify-center w-full h-full bg-white absolute top-0 left-0 z-[100]">
+      <div className="hidden print:flex flex-col items-center justify-center w-full h-full bg-white absolute top-0 left-0 z-[1001]">
          <h1 className="text-4xl font-bold mb-2">OJT Daily Attendance</h1>
          <h2 className="text-xl text-slate-600 mb-10">Date: {todayStr}</h2>
          <img src={qrImageUrl} alt="Printable QR Code" className="w-[400px] h-[400px] mb-10" />
@@ -838,9 +891,13 @@ function QRGeneratorModal({ officeCode, onClose }) {
 // INTERN VIEW
 // ============================================================================
 function InternView({ currentUser, allLogs, allOffices, onLogout, showToast, allUsers }) {
-  const [activeScanner, setActiveScanner] = useState(null); // 'amIn', 'amOut', 'pmIn', 'pmOut'
-  const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().slice(0, 7)); // YYYY-MM
-  const todayStr = new Date().toISOString().split('T')[0];
+  const [activeScanner, setActiveScanner] = useState(null); 
+  const [showBuddyModal, setShowBuddyModal] = useState(false);
+  const [buddyId, setBuddyId] = useState('');
+  
+  const todayStr = new Date().toLocaleDateString('en-CA');
+  const [selectedMonth, setSelectedMonth] = useState(todayStr.slice(0, 7)); 
+  
   const myLogToday = allLogs.find(l => l.studentId === currentUser.studentId && l.date === todayStr) || null;
   const office = allOffices.find(o => o.officeCode === currentUser.officeCode);
   const directorName = allUsers?.find(u => u.email === office?.directorEmail)?.name || "Director";
@@ -848,32 +905,26 @@ function InternView({ currentUser, allLogs, allOffices, onLogout, showToast, all
   const myLogs = allLogs.filter(l => l.studentId === currentUser.studentId);
   const filteredLogs = myLogs.filter(l => l.date.startsWith(selectedMonth)).sort((a,b) => new Date(b.date) - new Date(a.date));
 
-  const handlePrintDTR = () => {
-    window.print();
-  };
-
   if (currentUser.status === 'pending') {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center p-4">
         <div className="bg-white p-8 rounded-2xl shadow-xl max-w-sm w-full text-center border border-slate-100">
-          <div className="w-16 h-16 bg-amber-50 text-amber-500 rounded-full flex items-center justify-center mx-auto mb-4">
-            <Clock size={32} />
-          </div>
+          <div className="w-16 h-16 bg-amber-50 text-amber-500 rounded-full flex items-center justify-center mx-auto mb-4"><Clock size={32} /></div>
           <h2 className="text-xl font-bold text-slate-900 mb-2">Pending Approval</h2>
-          <p className="text-slate-500 text-sm mb-6">Your registration for {office?.name || 'the office'} has been sent to the director. Please wait for approval before you can log your time.</p>
+          <p className="text-slate-500 text-sm mb-6">Your registration for {office?.name || 'the office'} has been sent to the director. Please wait for approval.</p>
           <button onClick={onLogout} className="text-slate-600 font-medium text-sm hover:underline">Return to Login</button>
         </div>
       </div>
     );
   }
 
-  const handleLogSubmit = async (type, photoData) => {
-    const now = new Date();
-    const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
+  const handleLogSubmit = async (type, photoData, targetStudentId = currentUser.studentId) => {
+    const timeStr = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+    const existingLog = allLogs.find(l => l.studentId === targetStudentId && l.date === todayStr);
+    const logId = existingLog ? existingLog.id : `${targetStudentId}_${todayStr}`;
     
-    const logId = myLogToday ? myLogToday.id : `${currentUser.studentId}_${todayStr}`;
-    const logData = myLogToday ? { ...myLogToday } : {
-      studentId: currentUser.studentId,
+    const logData = existingLog ? { ...existingLog } : {
+      studentId: targetStudentId,
       officeCode: currentUser.officeCode,
       date: todayStr,
       amIn: null, amOut: null, pmIn: null, pmOut: null,
@@ -885,10 +936,10 @@ function InternView({ currentUser, allLogs, allOffices, onLogout, showToast, all
 
     try {
       await setDoc(doc(getPublicPath('attendance'), logId), logData);
-      showToast(`${type.replace(/([A-Z])/g, ' $1').toUpperCase()} logged successfully!`);
+      showToast(`${type.replace(/([A-Z])/g, ' $1').toUpperCase()} logged successfully for ${targetStudentId}!`);
       setActiveScanner(null);
     } catch (err) {
-      showToast("Error saving log. It will sync when online.", "error"); // IndexedDB handles actual saving
+      showToast("Error saving log. It will sync when online.", "error"); 
       setActiveScanner(null);
     }
   };
@@ -926,34 +977,33 @@ function InternView({ currentUser, allLogs, allOffices, onLogout, showToast, all
             <h1 className="text-xl font-bold">{currentUser.name}</h1>
             <p className="text-slate-400 text-xs font-mono">{currentUser.studentId}</p>
           </div>
-          <button onClick={onLogout} className="p-2 bg-slate-800 rounded-full hover:bg-slate-700 transition-colors text-slate-300">
-            <LogOut size={16} />
-          </button>
+          <button onClick={onLogout} className="p-2 bg-slate-800 rounded-full hover:bg-slate-700 transition-colors text-slate-300"><LogOut size={16} /></button>
         </div>
         <div className="bg-white/10 rounded-xl p-4 flex items-center gap-4 backdrop-blur-sm">
-          <div className="w-12 h-12 bg-white/20 rounded-lg flex items-center justify-center">
-            <CalendarDays size={24} className="text-white" />
-          </div>
-          <div>
-            <p className="text-sm font-medium text-slate-200">Today's Date</p>
-            <p className="text-lg font-bold font-mono tracking-wide">{todayStr}</p>
-          </div>
+          <div className="w-12 h-12 bg-white/20 rounded-lg flex items-center justify-center"><CalendarDays size={24} className="text-white" /></div>
+          <div><p className="text-sm font-medium text-slate-200">Today's Date</p><p className="text-lg font-bold font-mono tracking-wide">{todayStr}</p></div>
         </div>
       </div>
 
       <div className="flex-1 px-6 -mt-6">
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-2 gap-4 mb-4">
           <ActionButton type="amIn" label="AM In" icon={LogIn} />
           <ActionButton type="amOut" label="AM Out" icon={LogOut} />
           <ActionButton type="pmIn" label="PM In" icon={LogIn} />
           <ActionButton type="pmOut" label="PM Out" icon={LogOut} />
         </div>
 
-        {/* Time Record & DTR Section */}
-        <div className="mt-8 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden mb-8">
+        <button 
+          onClick={() => setShowBuddyModal(true)}
+          className="w-full bg-blue-50 text-blue-700 border border-blue-200 rounded-xl p-4 flex items-center justify-center gap-2 font-medium hover:bg-blue-100 transition-colors mb-8"
+        >
+          <Users size={20} /> Buddy Time-In (Offline Share)
+        </button>
+
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden mb-8">
           <div className="px-5 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
             <h2 className="font-semibold text-slate-900 flex items-center gap-2"><FileText size={18} className="text-slate-500" /> Time Record</h2>
-            <button onClick={handlePrintDTR} className="flex items-center gap-1 text-xs font-medium bg-slate-900 text-white px-3 py-1.5 rounded-lg hover:bg-slate-800 transition-colors">
+            <button onClick={() => window.print()} className="flex items-center gap-1 text-xs font-medium bg-slate-900 text-white px-3 py-1.5 rounded-lg hover:bg-slate-800 transition-colors">
               <Printer size={14} /> Print DTR
             </button>
           </div>
@@ -973,9 +1023,7 @@ function InternView({ currentUser, allLogs, allOffices, onLogout, showToast, all
                 <div key={log.id} className="p-4 hover:bg-slate-50 transition-colors">
                   <div className="flex justify-between items-center mb-2">
                     <div className="font-mono text-sm font-semibold text-slate-900">{log.date}</div>
-                    <div className="text-xs font-semibold px-2 py-1 bg-slate-100 text-slate-700 rounded border border-slate-200">
-                      Total: {dailyTotal}h
-                    </div>
+                    <div className="text-xs font-semibold px-2 py-1 bg-slate-100 text-slate-700 rounded border border-slate-200">Total: {dailyTotal}h</div>
                   </div>
                   <div className="grid grid-cols-2 gap-2 text-xs mt-3">
                     <div><span className="text-slate-500">AM In:</span> <span className="font-medium">{log.amIn || '-'}</span></div>
@@ -986,19 +1034,48 @@ function InternView({ currentUser, allLogs, allOffices, onLogout, showToast, all
                 </div>
               );
             })}
-            {filteredLogs.length === 0 && (
-              <div className="p-6 text-center text-sm text-slate-500">No records found for this month.</div>
-            )}
+            {filteredLogs.length === 0 && <div className="p-6 text-center text-sm text-slate-500">No records found.</div>}
           </div>
         </div>
       </div>
+
+      {showBuddyModal && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl w-full max-w-sm overflow-hidden shadow-xl p-6">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="font-bold text-slate-900 flex items-center gap-2"><Users size={18}/> Buddy Time-In</h3>
+              <button onClick={() => setShowBuddyModal(false)}><X size={20} className="text-slate-400 hover:text-slate-600" /></button>
+            </div>
+            <p className="text-sm text-slate-500 mb-4">Let a co-intern log their time using your device. This works offline.</p>
+            
+            <label className="block text-sm font-medium text-slate-700 mb-1">Buddy's Student ID</label>
+            <input 
+              type="text" 
+              value={buddyId}
+              onChange={(e) => setBuddyId(e.target.value)}
+              className="w-full border border-slate-300 rounded-lg px-4 py-2 mb-6 focus:ring-2 outline-none"
+              placeholder="e.g. 2021-0001"
+            />
+
+            <div className="grid grid-cols-2 gap-2">
+              <button onClick={() => { if(!buddyId) return showToast("Enter ID", "error"); setActiveScanner('amIn'); setShowBuddyModal(false); }} className="bg-slate-100 text-slate-700 py-2 rounded text-sm font-medium hover:bg-slate-200">AM In</button>
+              <button onClick={() => { if(!buddyId) return showToast("Enter ID", "error"); setActiveScanner('amOut'); setShowBuddyModal(false); }} className="bg-slate-100 text-slate-700 py-2 rounded text-sm font-medium hover:bg-slate-200">AM Out</button>
+              <button onClick={() => { if(!buddyId) return showToast("Enter ID", "error"); setActiveScanner('pmIn'); setShowBuddyModal(false); }} className="bg-slate-100 text-slate-700 py-2 rounded text-sm font-medium hover:bg-slate-200">PM In</button>
+              <button onClick={() => { if(!buddyId) return showToast("Enter ID", "error"); setActiveScanner('pmOut'); setShowBuddyModal(false); }} className="bg-slate-100 text-slate-700 py-2 rounded text-sm font-medium hover:bg-slate-200">PM Out</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {activeScanner && (
         <TwoStepCameraModal 
           type={activeScanner} 
           officeCode={currentUser.officeCode}
-          onClose={() => setActiveScanner(null)} 
-          onComplete={handleLogSubmit}
+          onClose={() => { setActiveScanner(null); setBuddyId(''); }} 
+          onComplete={(type, photoData) => {
+            handleLogSubmit(type, photoData, buddyId || currentUser.studentId);
+            setBuddyId('');
+          }}
           showToast={showToast}
         />
       )}
@@ -1015,17 +1092,16 @@ function InternView({ currentUser, allLogs, allOffices, onLogout, showToast, all
   );
 }
 
-// --- Dual-Step Scanner & Camera Modal ---
+// --- Two-Step Scanner & Camera Modal ---
 function TwoStepCameraModal({ type, officeCode, onClose, onComplete, showToast }) {
-  const [step, setStep] = useState('scan'); // 'scan', 'selfie'
+  const [step, setStep] = useState('scan'); 
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
 
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = new Date().toLocaleDateString('en-CA');
   const expectedQR = `OJT-QR|${officeCode}|${todayStr}`;
 
-  // Start Camera
   useEffect(() => {
     const startCamera = async () => {
       try {
@@ -1045,13 +1121,10 @@ function TwoStepCameraModal({ type, officeCode, onClose, onComplete, showToast }
     startCamera();
 
     return () => {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop());
-      }
+      if (streamRef.current) streamRef.current.getTracks().forEach(track => track.stop());
     };
   }, [step, onClose, showToast]);
 
-  // QR Scanning Loop
   useEffect(() => {
     if (step !== 'scan') return;
 
@@ -1070,10 +1143,9 @@ function TwoStepCameraModal({ type, officeCode, onClose, onComplete, showToast }
           const code = window.jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: "dontInvert" });
           if (code) {
             if (code.data === expectedQR) {
-              setStep('selfie'); // Valid! Move to selfie.
+              setStep('selfie'); 
             } else {
               showToast("Invalid or expired QR code.", "error");
-              // Stop scanning for a bit to prevent spam
               clearInterval(scanInterval);
               setTimeout(() => { scanInterval = setInterval(scan, 500); }, 3000);
             }
@@ -1094,15 +1166,13 @@ function TwoStepCameraModal({ type, officeCode, onClose, onComplete, showToast }
       canvas.height = video.videoHeight;
       const ctx = canvas.getContext("2d");
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      
-      // Compress to avoid 1MB Firestore limit
       const photoData = canvas.toDataURL('image/jpeg', 0.5);
       onComplete(type, photoData);
     }
   };
 
   return (
-    <div className="fixed inset-0 bg-black/95 z-50 flex flex-col">
+    <div className="fixed inset-0 bg-black/95 z-[500] flex flex-col">
       <div className="p-4 flex justify-between items-center bg-gradient-to-b from-black/50 to-transparent absolute top-0 w-full z-10">
         <h3 className="text-white font-medium">{step === 'scan' ? 'Step 1: Scan QR' : 'Step 2: Take Selfie'}</h3>
         <button onClick={onClose} className="text-white/70 hover:text-white bg-black/30 p-2 rounded-full backdrop-blur-sm"><X size={20}/></button>
@@ -1130,13 +1200,8 @@ function TwoStepCameraModal({ type, officeCode, onClose, onComplete, showToast }
 
       {step === 'selfie' && (
         <div className="bg-black p-8 pb-12 flex justify-center border-t border-white/10 relative z-10">
-          <button 
-            onClick={handleCaptureSelfie}
-            className="w-20 h-20 rounded-full border-4 border-slate-300 flex items-center justify-center focus:outline-none focus:scale-95 transition-transform"
-          >
-            <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center">
-               <Camera size={28} className="text-slate-900" />
-            </div>
+          <button onClick={handleCaptureSelfie} className="w-20 h-20 rounded-full border-4 border-slate-300 flex items-center justify-center focus:outline-none focus:scale-95 transition-transform">
+            <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center"><Camera size={28} className="text-slate-900" /></div>
           </button>
         </div>
       )}
@@ -1153,8 +1218,6 @@ function DTRPrintLayout({ intern, office, directorName, logs, month }) {
   if (!year || !monthNum) return null;
   
   const monthName = new Date(year, monthNum - 1).toLocaleString('default', { month: 'long', year: 'numeric' });
-
-  // Create 31 days
   const days = Array.from({ length: 31 }, (_, i) => {
     const d = String(i + 1).padStart(2, '0');
     const dateStr = `${year}-${monthNum}-${d}`;
@@ -1165,7 +1228,6 @@ function DTRPrintLayout({ intern, office, directorName, logs, month }) {
 
   const DTRCopy = () => (
     <div className="w-[48%] flex flex-col text-[10px] font-sans text-black box-border">
-      {/* Header */}
       <div className="text-center font-bold text-[11px] leading-tight mb-3">
         <p>PARTIDO STATE UNIVERSITY</p>
         <p>Camarines Sur</p>
@@ -1176,12 +1238,11 @@ function DTRPrintLayout({ intern, office, directorName, logs, month }) {
         <p><span className="font-semibold">Name:</span> <span className="underline uppercase">{intern.name}</span></p>
         <p><span className="font-semibold">Office:</span> {office?.name || '_________________'}</p>
         <p><span className="font-semibold">Position & Course:</span> On-the-Job Trainee, CBM</p>
-        <p><span className="font-semibold">Official Hours of Regular Days:</span> 7:00 – 12:00, 1:00 – 6:00</p>
+        <p><span className="font-semibold">Official Hours of Regular Days:</span> 8:00 – 12:00, 1:00 – 5:00</p>
         <p><span className="font-semibold">Month of:</span> {monthName}</p>
       </div>
 
-      {/* Table */}
-      <table className="w-full border-collapse border border-black text-center mb-3 font-family Times New Roman">
+      <table className="w-full border-collapse border border-black text-center mb-3">
         <thead>
           <tr>
             <th className="border border-black p-0.5 align-middle" rowSpan="2">Day</th>
@@ -1221,7 +1282,6 @@ function DTRPrintLayout({ intern, office, directorName, logs, month }) {
         </tbody>
       </table>
 
-      {/* Footer */}
       <div className="text-[10px] leading-snug flex-1 flex flex-col justify-end">
         <p className="mb-4 text-justify">I Certify on my honor that the above is true and correct report of the hours of work performed, record of which was made daily of the time of arrival and departure from office.</p>
         <div className="border-b border-black w-3/4 mx-auto mb-1 text-center font-bold text-[11px] uppercase">{intern.name}</div>
@@ -1235,7 +1295,7 @@ function DTRPrintLayout({ intern, office, directorName, logs, month }) {
   );
 
   return (
-    <div className="hidden print:flex w-full justify-between bg-white text-black max-w-[800px] mx-auto absolute top-0 left-0 right-0 z-[100] h-screen p-8" style={{ pageBreakAfter: 'always' }}>
+    <div className="hidden print:flex w-full justify-between bg-white text-black max-w-[800px] mx-auto absolute top-0 left-0 right-0 z-[10000] h-screen p-8" style={{ pageBreakAfter: 'always' }}>
       <DTRCopy />
       <DTRCopy />
     </div>
