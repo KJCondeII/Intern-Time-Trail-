@@ -11,13 +11,18 @@ import { getFirestore, collection, doc, setDoc, onSnapshot, enableIndexedDbPersi
 
 // --- Firebase Setup ---
 const firebaseConfig = {
-  apiKey: "AIzaSyCii9ms8C_AFSqpRKSF6L9hbr6YR8L-4TM",
-  authDomain: "ojt-systems.firebaseapp.com",
-  projectId: "ojt-systems",
-  storageBucket: "ojt-systems.firebasestorage.app",
-  messagingSenderId: "697026632507",
-  appId: "1:697026632507:web:b154d9d09c2335fd06751e"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID
 };
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
