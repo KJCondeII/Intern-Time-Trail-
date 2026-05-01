@@ -8,8 +8,11 @@ import {
 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
-// FIX: Added query and where for optimized data fetching
-import { getFirestore, collection, doc, setDoc, onSnapshot, enableMultiTabIndexedDbPersistence, deleteDoc, getDocs, query, where } from 'firebase/firestore';
+// FIX: Updated imports to use the modern Firestore cache settings
+import { 
+  getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager, 
+  collection, doc, setDoc, onSnapshot, deleteDoc, getDocs, query, where 
+} from 'firebase/firestore';
 
 // --- Firebase Setup ---
 let envConfig = null;
@@ -26,15 +29,19 @@ const firebaseConfig = envConfig || {
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
-const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id.replace(/\//g, '-') : 'ojt-system-v2';
 
-// Safe offline persistence setup for multiple tabs
-try { 
-  enableMultiTabIndexedDbPersistence(db).catch((err) => {
-    if (err.code === 'failed-precondition') console.warn('Multiple tabs open, persistence limited.');
-  }); 
-} catch (e) {}
+// FIX: Modern safe offline persistence setup for multiple tabs (Clears the deprecation warning)
+let db;
+try {
+  db = initializeFirestore(app, {
+    localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+  });
+} catch (e) {
+  // Fallback in case initializeFirestore was already called elsewhere
+  db = getFirestore(app);
+}
+
+const appId = typeof __app_id !== 'undefined' ? __app_id.replace(/\//g, '-') : 'ojt-system-v2';
 
 // Global paths
 const getPublicPath = (colName) => collection(db, 'artifacts', appId, 'public', 'data', colName);
@@ -138,6 +145,12 @@ export default function App() {
 
   // Initial Setup & Listeners
   useEffect(() => {
+    // FIX: Clean up broken default manifest links from index.html (solves the %PUBLIC_URL% error)
+    const brokenManifest = document.querySelector('link[rel="manifest"]');
+    if (brokenManifest && brokenManifest.href.includes('%PUBLIC_URL%')) {
+      brokenManifest.remove();
+    }
+
     if (!document.querySelector('link[rel="manifest"]')) {
       const manifest = {
         name: "OJT System", short_name: "OJT App", display: "standalone",
