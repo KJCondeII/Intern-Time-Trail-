@@ -7,7 +7,9 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
+
       includeAssets: ['favicon.ico', 'logo192.png', 'logo512.png'],
+
       manifest: {
         name: 'OJT Attendance System',
         short_name: 'OJT System',
@@ -15,7 +17,7 @@ export default defineConfig({
         theme_color: '#0f172a',
         background_color: '#f8fafc',
         display: 'standalone',
-        start_url: '.',
+        start_url: '/', // ✅ FIXED
         icons: [
           {
             src: '/logo192.png',
@@ -29,9 +31,31 @@ export default defineConfig({
           }
         ]
       },
+
       workbox: {
-        // This caches all your JS, CSS, and HTML for offline use
-        globPatterns: ['**/*.{js,css,html,ico,png,svg}']
+        globPatterns: ['**/*.{js,css,html,ico,png,svg}'],
+
+        // ✅ REQUIRED for React apps
+        navigateFallback: '/index.html',
+
+        runtimeCaching: [
+          {
+            urlPattern: ({ request }) =>
+              request.destination === 'document',
+            handler: 'NetworkFirst',
+            options: {
+              cacheName: 'pages-cache'
+            }
+          },
+          {
+            urlPattern: ({ request }) =>
+              request.destination === 'image',
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'images-cache'
+            }
+          }
+        ]
       }
     })
   ]
