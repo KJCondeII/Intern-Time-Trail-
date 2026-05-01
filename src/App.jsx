@@ -8,7 +8,6 @@ import {
 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
-// FIX: Updated imports to use the modern Firestore cache settings
 import { 
   getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager, 
   collection, doc, setDoc, onSnapshot, deleteDoc, getDocs, query, where 
@@ -30,14 +29,13 @@ const firebaseConfig = envConfig || {
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 
-// FIX: Modern safe offline persistence setup for multiple tabs (Clears the deprecation warning)
+// Modern safe offline persistence setup
 let db;
 try {
   db = initializeFirestore(app, {
     localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
   });
 } catch (e) {
-  // Fallback in case initializeFirestore was already called elsewhere
   db = getFirestore(app);
 }
 
@@ -63,7 +61,7 @@ const calculateHours = (inStr, outStr) => {
   } catch (e) { return 0; }
 };
 
-// Image Resizer Helper (Optimizes Base64 to prevent Firestore quota overload)
+// Image Resizer Helper
 const resizeImage = (file, maxSize = 300) => new Promise((resolve, reject) => {
   if (!file) return resolve(null);
   const reader = new FileReader();
@@ -105,6 +103,7 @@ const Toast = ({ message, type, onClose }) => {
 // ============================================================================
 export default function App() {
   const [isAuthReady, setIsAuthReady] = useState(false);
+  const [isDataLoaded, setIsDataLoaded] = useState(false); // FIX: Wait for data before rendering setup banner
   const [firebaseUser, setFirebaseUser] = useState(null);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   
@@ -145,31 +144,6 @@ export default function App() {
 
   // Initial Setup & Listeners
   useEffect(() => {
-    // FIX: Clean up broken default manifest links from index.html (solves the %PUBLIC_URL% error)
-    const brokenManifest = document.querySelector('link[rel="manifest"]');
-    if (brokenManifest && brokenManifest.href.includes('%PUBLIC_URL%')) {
-      brokenManifest.remove();
-    }
-
-    if (!document.querySelector('link[rel="manifest"]')) {
-      const manifest = {
-        name: "OJT System", short_name: "OJT App", display: "standalone",
-        start_url: ".", background_color: "#f8fafc", theme_color: "#0f172a",
-        icons: [{ src: "https://api.iconify.design/lucide:clock.svg", sizes: "192x192", type: "image/svg+xml" }]
-      };
-      const manifestUrl = URL.createObjectURL(new Blob([JSON.stringify(manifest)], { type: 'application/json' }));
-      const link = document.createElement('link'); link.rel = 'manifest'; link.href = manifestUrl;
-      document.head.appendChild(link);
-    }
-
-    if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/sw.js').catch(() => {
-           console.log('No physical sw.js found. Generate it from the Super Admin dashboard to enable full offline UI mode.');
-        });
-      });
-    }
-
     if (!window.jsQR) {
       const script1 = document.createElement('script');
       script1.src = 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js';
@@ -207,19 +181,32 @@ export default function App() {
     };
   }, []);
 
-  // OPTIMIZATION PART 1: Fetch Light Data ONLY (Offices & Users for Login Validation)
+  // Fetch Light Data ONLY (Offices & Users for Login Validation)
   useEffect(() => {
     if (!isAuthReady || !firebaseUser) return;
 
-    const unsubOffices = onSnapshot(getPublicPath('offices'), (snap) => setAllOffices(snap.docs.map(d => ({ id: d.id, ...d.data() }))), (err) => console.error(err));
-    const unsubUsers = onSnapshot(getPublicPath('users'), (snap) => setAllUsers(snap.docs.map(d => ({ id: d.id, ...d.data() }))), (err) => console.error(err));
+    let usersLoaded = false;
+    let officesLoaded = false;
+
+    const checkLoaded = () => {
+      if (usersLoaded && officesLoaded) setIsDataLoaded(true);
+    };
+
+    const unsubOffices = onSnapshot(getPublicPath('offices'), (snap) => {
+      setAllOffices(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      officesLoaded = true; checkLoaded();
+    }, (err) => console.error(err));
+    
+    const unsubUsers = onSnapshot(getPublicPath('users'), (snap) => {
+      setAllUsers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      usersLoaded = true; checkLoaded();
+    }, (err) => console.error(err));
 
     return () => { unsubOffices(); unsubUsers(); };
   }, [isAuthReady, firebaseUser]);
 
-  // OPTIMIZATION PART 2: Conditionally Fetch Heavy Logs ONLY based on the Logged-In Role
+  // Conditionally Fetch Heavy Logs
   useEffect(() => {
-    // Wait until we actually know who is logged in
     if (!isAuthReady || !firebaseUser || !currentUser) {
       setAllLogs([]);
       setAllActivityLogs([]);
@@ -231,12 +218,9 @@ export default function App() {
 
     try {
       if (currentUser.role === 'superadmin') {
-        // Super Admin needs full system diagnostic logs
         unsubLogs = onSnapshot(getPublicPath('attendance'), (snap) => setAllLogs(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
         unsubActivity = onSnapshot(getPublicPath('activity_logs'), (snap) => setAllActivityLogs(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
       } else if (currentUser.role === 'director' || currentUser.role === 'intern') {
-        // Directors & Interns ONLY fetch attendance logs assigned to their exact office code. 
-        // This drops network load dramatically. Activity logs are skipped entirely.
         const qLogs = query(getPublicPath('attendance'), where('officeCode', '==', currentUser.officeCode));
         unsubLogs = onSnapshot(qLogs, (snap) => setAllLogs(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
       }
@@ -287,7 +271,8 @@ export default function App() {
     ? (allUsers.find(u => u.id === 'superadmin') || currentUser) 
     : (currentUser ? (allUsers.find(u => (currentUser.id && u.id === currentUser.id) || (currentUser.email && u.email === currentUser.email) || (currentUser.studentId && u.studentId === currentUser.studentId)) || currentUser) : null);
 
-  if (!isAuthReady) {
+  // FIX: Don't show the login screen until data is fully loaded, preventing screen flashes
+  if (!isAuthReady || (firebaseUser && !isDataLoaded)) {
     return <div className="min-h-screen flex items-center justify-center bg-slate-50"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-slate-900"></div></div>;
   }
 
@@ -355,21 +340,19 @@ function LoginView({ allUsers, allOffices, onLogin, showToast }) {
   const [regCode, setRegCode] = useState('');
   const [regPass, setRegPass] = useState('');
 
-  // SECURE FEATURE: Check if the system has been initialized
   const hasSuperAdmin = allUsers.some(u => u.role === 'superadmin');
 
   const handleLogin = async (e) => {
     e.preventDefault();
     
-    // Check all dynamic users from the database securely
     let user = allUsers.find(u => (u.studentId === loginId || u.email === loginId || u.username === loginId) && u.password === loginPass);
 
     if (user) {
-      if (activeTab === 'intern' && user.role !== 'intern') return showToast("Please use the Director Login tab.", "error");
-      if (activeTab === 'director' && user.role !== 'director') return showToast("Please use the Intern Login tab.", "error");
-      if (user.role === 'intern' && user.status !== 'approved' && user.status !== 'pending') return showToast("Your account is not active.", "error");
-      
       if (user.role !== 'superadmin') {
+        if (activeTab === 'intern' && user.role !== 'intern') return showToast("Please use the Director Login tab.", "error");
+        if (activeTab === 'director' && user.role !== 'director') return showToast("Please use the Intern Login tab.", "error");
+        if (user.role === 'intern' && user.status !== 'approved' && user.status !== 'pending') return showToast("Your account is not active.", "error");
+        
         const matchingOffice = allOffices.find(o => o.officeCode === user.officeCode);
         if (!matchingOffice) return showToast(`Error: Assigned office no longer exists.`, "error");
       }
@@ -380,7 +363,6 @@ function LoginView({ allUsers, allOffices, onLogin, showToast }) {
     }
   };
 
-  // SECURE FEATURE: Create Admin account on first load, removing the need for hardcoded code
   const handleSetupAdmin = async (e) => {
     e.preventDefault();
     if (hasSuperAdmin) return showToast("Super Admin already exists.", "error");

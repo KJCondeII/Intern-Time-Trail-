@@ -8,7 +8,7 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',
 
-      includeAssets: ['favicon.ico', 'logo192.png', 'logo512.png'],
+      includeAssets: ['favicon.svg'],
 
       manifest: {
         name: 'OJT Attendance System',
@@ -17,23 +17,20 @@ export default defineConfig({
         theme_color: '#0f172a',
         background_color: '#f8fafc',
         display: 'standalone',
-        start_url: '/', // ✅ FIXED
+        scope: '/',
+        start_url: '/',
         icons: [
           {
-            src: '/logo192.png',
-            sizes: '192x192',
-            type: 'image/png'
-          },
-          {
-            src: '/logo512.png',
-            sizes: '512x512',
-            type: 'image/png'
+            src: '/favicon.svg',
+            sizes: 'any',
+            type: 'image/svg+xml',
+            purpose: 'any maskable'
           }
         ]
       },
 
       workbox: {
-        globPatterns: ['**/*.{js,css,html,ico,png,svg}'],
+        globPatterns: ['**/*.{js,css,html,ico,png,svg,json,webmanifest}'],
 
         // ✅ REQUIRED for React apps
         navigateFallback: '/index.html',
