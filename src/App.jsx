@@ -339,8 +339,13 @@ function LoginView({ allUsers, allOffices, onLogin, showToast }) {
   const [regCourse, setRegCourse] = useState('');
   const [regCode, setRegCode] = useState('');
   const [regPass, setRegPass] = useState('');
+  const [regDirectorName, setRegDirectorName] = useState('');
+  const [regDirectorEmail, setRegDirectorEmail] = useState('');
+  const [regDirectorOffice, setRegDirectorOffice] = useState('');
+  const [regDirectorPass, setRegDirectorPass] = useState('');
 
   const hasSuperAdmin = allUsers.some(u => u.role === 'superadmin');
+  const isSystemUninitialized = !hasSuperAdmin && allUsers.length === 0;
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -364,7 +369,7 @@ function LoginView({ allUsers, allOffices, onLogin, showToast }) {
   };
 
   const handleSetupAdmin = async (e) => {
-    e.preventDefault();
+    if (e?.preventDefault) e.preventDefault();
     if (hasSuperAdmin) return showToast("Super Admin already exists.", "error");
 
     const newAdmin = {
@@ -403,6 +408,35 @@ function LoginView({ allUsers, allOffices, onLogin, showToast }) {
     } catch (err) { showToast("Error registering.", "error"); }
   };
 
+  const handleRegisterDirector = async (e) => {
+    e.preventDefault();
+    if (!regDirectorOffice.trim()) return showToast("Office name is required.", "error");
+    if (allUsers.find(u => u.email === regDirectorEmail)) return showToast("Email already registered.", "error");
+
+    const newCode = 'OJT-' + Math.random().toString(36).substring(2, 6).toUpperCase();
+    const officeId = Date.now().toString();
+
+    const newDirector = {
+      id: regDirectorEmail,
+      role: 'director', name: regDirectorName, email: regDirectorEmail,
+      password: regDirectorPass, officeCode: newCode, officeId: officeId,
+      createdAt: new Date().toISOString()
+    };
+
+    const newOffice = {
+      name: regDirectorOffice, directorEmail: regDirectorEmail, officeCode: newCode,
+      officeId: officeId, isActive: true, targetOjtHours: 500, requiredDailyHours: 8,
+      createdAt: new Date().toISOString()
+    };
+
+    try {
+      await setDoc(doc(getPublicPath('users'), regDirectorEmail), newDirector);
+      await setDoc(doc(getPublicPath('offices'), officeId), newOffice);
+      showToast(`Director registered successfully! Office Code: ${newCode}`);
+      setRegModal(null); setActiveTab('director'); setLoginId(regDirectorEmail);
+    } catch (err) { showToast("Error registering director.", "error"); }
+  };
+
   return (
     <div className="min-h-screen flex items-center justify-center p-4 bg-slate-50">
       <div className="w-full max-w-md bg-white rounded-2xl shadow-xl overflow-hidden border border-slate-100">
@@ -426,17 +460,20 @@ function LoginView({ allUsers, allOffices, onLogin, showToast }) {
         </div>
 
         <div className="p-8">
-          {!hasSuperAdmin && (
-            <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg text-blue-800 text-sm flex gap-3 items-start shadow-sm">
-              <Shield className="shrink-0 mt-0.5 text-blue-600" size={18} />
-              <div>
-                <p className="font-bold mb-1">System Uninitialized</p>
-                <p className="text-blue-700/90 leading-snug">No Super Admin detected. Create your secure credentials below to lock the system.</p>
+          {isSystemUninitialized && (
+            <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg text-blue-800 text-sm flex flex-col gap-3 shadow-sm">
+              <div className="flex items-start gap-3">
+                <Shield className="shrink-0 mt-0.5 text-blue-600" size={18} />
+                <div>
+                  <p className="font-bold mb-1">System Uninitialized</p>
+                  <p className="text-blue-700/90 leading-snug">No Super Admin detected yet. You can initialize the admin account here, or let a director self-register first.</p>
+                </div>
               </div>
+              <button type="button" onClick={handleSetupAdmin} className="w-full max-w-xs self-start bg-slate-900 text-white font-medium py-2 rounded-lg text-sm hover:bg-slate-800 transition-colors">Initialize Super Admin</button>
             </div>
           )}
 
-          <form onSubmit={!hasSuperAdmin ? handleSetupAdmin : handleLogin} className="space-y-4">
+          <form onSubmit={isSystemUninitialized ? handleSetupAdmin : handleLogin} className="space-y-4">
             <div>
               <label className="block text-xs font-medium text-slate-500 uppercase tracking-wider mb-1">
                 {!hasSuperAdmin ? 'Create Admin Username' : (activeTab === 'intern' ? 'Student ID' : 'Email / Admin ID')}
@@ -456,13 +493,19 @@ function LoginView({ allUsers, allOffices, onLogin, showToast }) {
               </div>
             </div>
             <button type="submit" className="w-full bg-slate-900 hover:bg-slate-800 text-white font-medium py-2 rounded-lg transition-colors mt-6 text-sm flex items-center justify-center gap-2 shadow-sm">
-              {!hasSuperAdmin ? "Initialize Super Admin" : "Sign In"} <LogIn size={16} />
+              {isSystemUninitialized ? "Initialize Super Admin" : "Sign In"} <LogIn size={16} />
             </button>
           </form>
 
-          {hasSuperAdmin && activeTab === 'intern' && (
+          {activeTab === 'intern' && allOffices.length > 0 && (
             <div className="mt-8 text-center border-t border-slate-100 pt-6">
               <p className="text-sm text-slate-500">New intern? <button type="button" onClick={() => setRegModal('intern')} className="text-blue-600 font-semibold hover:underline">Register here</button></p>
+            </div>
+          )}
+
+          {activeTab === 'director' && (
+            <div className="mt-8 text-center border-t border-slate-100 pt-6">
+              <p className="text-sm text-slate-500">New director? <button type="button" onClick={() => setRegModal('director')} className="text-blue-600 font-semibold hover:underline">Register here</button></p>
             </div>
           )}
         </div>
@@ -486,6 +529,24 @@ function LoginView({ allUsers, allOffices, onLogin, showToast }) {
                 <input type="text" required value={regCourse} onChange={(e)=>setRegCourse(e.target.value)} className="w-full px-4 py-2 border rounded-lg text-sm" placeholder="Course" />
               </div>
               <input type="password" required value={regPass} onChange={(e)=>setRegPass(e.target.value)} className="w-full px-4 py-2 border rounded-lg text-sm" placeholder="Password" />
+              <button type="submit" className="w-full bg-slate-900 text-white font-medium py-2 rounded-lg mt-4 text-sm">Submit Registration</button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {regModal === 'director' && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden shadow-2xl p-6">
+            <div className="flex justify-between items-center mb-6 border-b border-slate-100 pb-4">
+              <h3 className="font-bold text-lg text-slate-900">Director Registration</h3>
+              <button onClick={() => setRegModal(null)}><X size={20} className="text-slate-400" /></button>
+            </div>
+            <form onSubmit={handleRegisterDirector} className="space-y-4">
+              <input type="text" required value={regDirectorOffice} onChange={(e)=>setRegDirectorOffice(e.target.value)} className="w-full px-4 py-2 border rounded-lg text-sm" placeholder="Office Name" />
+              <input type="text" required value={regDirectorName} onChange={(e)=>setRegDirectorName(e.target.value)} className="w-full px-4 py-2 border rounded-lg text-sm" placeholder="Full Name" />
+              <input type="email" required value={regDirectorEmail} onChange={(e)=>setRegDirectorEmail(e.target.value)} className="w-full px-4 py-2 border rounded-lg text-sm" placeholder="Email" />
+              <input type="password" required value={regDirectorPass} onChange={(e)=>setRegDirectorPass(e.target.value)} className="w-full px-4 py-2 border rounded-lg text-sm" placeholder="Password" />
               <button type="submit" className="w-full bg-slate-900 text-white font-medium py-2 rounded-lg mt-4 text-sm">Submit Registration</button>
             </form>
           </div>
