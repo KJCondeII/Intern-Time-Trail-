@@ -8,7 +8,8 @@ import {
 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
-import { getFirestore, collection, doc, setDoc, onSnapshot, enableMultiTabIndexedDbPersistence, deleteDoc, getDocs } from 'firebase/firestore';
+// FIX: Added query and where for optimized data fetching
+import { getFirestore, collection, doc, setDoc, onSnapshot, enableMultiTabIndexedDbPersistence, deleteDoc, getDocs, query, where } from 'firebase/firestore';
 
 // --- Firebase Setup ---
 let envConfig = null;
@@ -31,11 +32,7 @@ const appId = typeof __app_id !== 'undefined' ? __app_id.replace(/\//g, '-') : '
 // Safe offline persistence setup for multiple tabs
 try { 
   enableMultiTabIndexedDbPersistence(db).catch((err) => {
-    if (err.code === 'failed-precondition') {
-       console.warn('Multiple tabs open, persistence can only be enabled in one tab at a time.');
-    } else if (err.code === 'unimplemented') {
-       console.warn('The current browser does not support all of the features required to enable persistence');
-    }
+    if (err.code === 'failed-precondition') console.warn('Multiple tabs open, persistence limited.');
   }); 
 } catch (e) {}
 
@@ -152,7 +149,6 @@ export default function App() {
       document.head.appendChild(link);
     }
 
-    // FIX: Expect a real sw.js file to satisfy strict browser security scopes for offline caching
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('/sw.js').catch(() => {
@@ -198,17 +194,45 @@ export default function App() {
     };
   }, []);
 
-  // Data Fetching
+  // OPTIMIZATION PART 1: Fetch Light Data ONLY (Offices & Users for Login Validation)
   useEffect(() => {
     if (!isAuthReady || !firebaseUser) return;
 
     const unsubOffices = onSnapshot(getPublicPath('offices'), (snap) => setAllOffices(snap.docs.map(d => ({ id: d.id, ...d.data() }))), (err) => console.error(err));
     const unsubUsers = onSnapshot(getPublicPath('users'), (snap) => setAllUsers(snap.docs.map(d => ({ id: d.id, ...d.data() }))), (err) => console.error(err));
-    const unsubLogs = onSnapshot(getPublicPath('attendance'), (snap) => setAllLogs(snap.docs.map(d => ({ id: d.id, ...d.data() }))), (err) => console.error(err));
-    const unsubActivity = onSnapshot(getPublicPath('activity_logs'), (snap) => setAllActivityLogs(snap.docs.map(d => ({ id: d.id, ...d.data() }))), (err) => console.error(err));
 
-    return () => { unsubOffices(); unsubUsers(); unsubLogs(); unsubActivity(); };
+    return () => { unsubOffices(); unsubUsers(); };
   }, [isAuthReady, firebaseUser]);
+
+  // OPTIMIZATION PART 2: Conditionally Fetch Heavy Logs ONLY based on the Logged-In Role
+  useEffect(() => {
+    // Wait until we actually know who is logged in
+    if (!isAuthReady || !firebaseUser || !currentUser) {
+      setAllLogs([]);
+      setAllActivityLogs([]);
+      return;
+    }
+
+    let unsubLogs = () => {};
+    let unsubActivity = () => {};
+
+    try {
+      if (currentUser.role === 'superadmin') {
+        // Super Admin needs full system diagnostic logs
+        unsubLogs = onSnapshot(getPublicPath('attendance'), (snap) => setAllLogs(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+        unsubActivity = onSnapshot(getPublicPath('activity_logs'), (snap) => setAllActivityLogs(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+      } else if (currentUser.role === 'director' || currentUser.role === 'intern') {
+        // Directors & Interns ONLY fetch attendance logs assigned to their exact office code. 
+        // This drops network load dramatically. Activity logs are skipped entirely.
+        const qLogs = query(getPublicPath('attendance'), where('officeCode', '==', currentUser.officeCode));
+        unsubLogs = onSnapshot(qLogs, (snap) => setAllLogs(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+      }
+    } catch (err) {
+      console.error("Optimized fetch error:", err);
+    }
+
+    return () => { unsubLogs(); unsubActivity(); };
+  }, [isAuthReady, firebaseUser, currentUser]);
 
   // Ghost User Auto-Logout Check
   useEffect(() => {
