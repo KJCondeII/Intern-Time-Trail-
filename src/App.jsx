@@ -1503,7 +1503,9 @@ function InternView({ currentUser, allLogs, allOffices, onLogout, showToast, all
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden mb-8">
           <div className="px-5 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
             <h2 className="font-semibold text-slate-900 flex items-center gap-2"><FileText size={18} className="text-slate-500" /> Time Record</h2>
-            <button onClick={() => window.print()} className="flex items-center gap-1 text-xs font-medium bg-slate-900 text-white px-3 py-1.5 rounded-lg hover:bg-slate-800 transition-colors"><Printer size={14} /> Print DTR</button>
+            <button onClick={() => window.print()} className="flex items-center gap-1 text-xs font-medium bg-slate-900 text-white px-3 py-1.5 rounded-lg hover:bg-slate-800 transition-colors">
+              <Printer size={14} /> Print DTR
+            </button>
           </div>
           <div className="p-4 bg-white border-b border-slate-100">
             <label className="block text-xs font-medium text-slate-500 mb-1">Select Month</label>
@@ -1708,46 +1710,67 @@ function DTRPrintLayout({ intern, office, directorName, logs, month }) {
   const DTRCopy = () => (
     <div className="w-[48%] flex flex-col text-[10px] font-sans text-black box-border">
       <div className="text-center font-bold text-[11px] leading-tight mb-3">
-        <p>PARTIDO STATE UNIVERSITY</p><p>Camarines Sur</p><p className="mt-2 text-xs">DAILY TIME RECORD</p>
+        <p>PARTIDO STATE UNIVERSITY</p><p>Camarines Sur</p>
       </div>
-      <div className="mb-3 leading-tight space-y-0.5">
-        <p><span className="font-semibold">Name:</span> <span className="underline uppercase">{intern.name}</span></p>
-        <p><span className="font-semibold">Office:</span> {office?.name || '_________________'}</p>
-        <p><span className="font-semibold">Month of:</span> {monthName}</p>
+      <div className="mb-2 leading-tight space-y-0.5">
+        <table className="w-full text-[10px] mb-2">
+          <tbody>
+            <tr><td className="w-20 font-semibold">Name:</td><td className="border-b border-black uppercase font-bold">{intern.name}</td></tr>
+            <tr><td className="font-semibold">Office:</td><td className="border-b border-black">{office?.name || '_________________'}</td></tr>
+            <tr><td className="font-semibold">Position & Course:</td><td className="border-b border-black">On-the-Job Trainee, {intern.course || 'CBM'}</td></tr>
+            <tr><td className="font-semibold">Official Hours of Regular Days:</td><td className="border-b border-black">8:00 – 12:00, 1:00 – 5:00</td></tr>
+          </tbody>
+        </table>
       </div>
-      <table className="w-full border-collapse border border-black text-center mb-3">
+      <div className="text-center font-bold mb-2">
+        <p className="text-[11px]">DAILY TIME RECORD</p>
+        <p className="text-[11px] font-normal">Month of: <span className="border-b border-black inline-block min-w-[100px] uppercase font-bold">{monthName}</span></p>
+      </div>
+      <table className="w-full border-collapse border border-black text-center mb-2 text-[9px]">
         <thead>
           <tr>
-            <th className="border border-black p-0.5" rowSpan="2">Day</th>
-            <th className="border border-black p-0.5" colSpan="2">AM TIME</th>
-            <th className="border border-black p-0.5" colSpan="2">PM TIME</th>
+            <th className="border border-black p-0.5 font-normal" rowSpan="2">Day</th>
+            <th className="border border-black p-0.5 font-normal" colSpan="2">AM TIME</th>
+            <th className="border border-black p-0.5 font-normal" colSpan="2">PM TIME</th>
+            <th className="border border-black p-0.5 font-normal" colSpan="2">OVERTIME</th>
+            <th className="border border-black p-0.5 font-normal leading-tight" rowSpan="2">Tardy &<br/>Undertime</th>
           </tr>
           <tr>
-            <th className="border border-black p-0.5 w-[12%]">IN</th><th className="border border-black p-0.5 w-[12%]">OUT</th>
-            <th className="border border-black p-0.5 w-[12%]">IN</th><th className="border border-black p-0.5 w-[12%]">OUT</th>
+            <th className="border border-black p-0.5 font-normal w-[12%]">IN</th><th className="border border-black p-0.5 font-normal w-[12%]">OUT</th>
+            <th className="border border-black p-0.5 font-normal w-[12%]">IN</th><th className="border border-black p-0.5 font-normal w-[12%]">OUT</th>
+            <th className="border border-black p-0.5 font-normal w-[12%]">IN</th><th className="border border-black p-0.5 font-normal w-[12%]">OUT</th>
           </tr>
         </thead>
         <tbody>
           {days.map(({ day, log }) => (
-            <tr key={day} className="h-[18px]">
+            <tr key={day} className="h-[16px]">
               <td className="border border-black p-0.5 font-semibold">{day}</td>
               <td className="border border-black p-0.5">{stripTime(log?.amIn)}</td><td className="border border-black p-0.5">{stripTime(log?.amOut)}</td>
               <td className="border border-black p-0.5">{stripTime(log?.pmIn)}</td><td className="border border-black p-0.5">{stripTime(log?.pmOut)}</td>
+              <td className="border border-black p-0.5"></td><td className="border border-black p-0.5"></td>
+              <td className="border border-black p-0.5"></td>
             </tr>
           ))}
         </tbody>
       </table>
-      <div className="text-[10px] leading-snug flex-1 flex flex-col justify-end">
-        <div className="border-b border-black w-3/4 mx-auto mb-1 text-center font-bold text-[11px] uppercase">{intern.name}</div>
-        <p className="text-center mb-4">On-the-Job Trainee, {intern.course || 'CBM'}</p>
-        <div className="border-b border-black w-3/4 mx-auto mb-1 text-center font-bold text-[11px] uppercase">{directorName}</div>
+      <div className="flex justify-between text-[10px] mb-3 font-medium px-4">
+          <span>Tardy = _____</span><span>Under = _____</span><span>Absent = _____</span>
+      </div>
+      <div className="text-[10px] text-justify mb-5 leading-snug">
+        I Certify on my honor that the above is true and correct report of the hours of work performed, record of which was made daily of the time of arrival and departure from office.
+      </div>
+      <div className="text-[10px] flex-1 flex flex-col justify-end pb-2">
+        <div className="border-b border-black w-3/4 mb-1 font-bold text-[11px] uppercase text-center">{intern.name}</div>
+        <p className="mb-4 text-center">On-the-Job Trainee, {intern.course || 'CBM'}</p>
+        <div className="text-[10px] mb-4">Verified as to the prescribed hours.</div>
+        <div className="border-b border-black w-3/4 mb-1 font-bold text-[11px] uppercase text-center">{directorName}</div>
         <p className="text-center">Director, {office?.name || 'Office'}</p>
       </div>
     </div>
   );
 
   return (
-    <div className="hidden print:flex w-full justify-between bg-white text-black max-w-[800px] mx-auto absolute top-0 left-0 right-0 z-[10000] h-screen p-8" style={{ pageBreakAfter: 'always' }}>
+    <div className="hidden print:flex w-full justify-between bg-white text-black max-w-[800px] mx-auto absolute top-0 left-0 right-0 z-[10000] h-[10.5in] py-8 px-4" style={{ pageBreakAfter: 'always' }}>
       <DTRCopy /><DTRCopy />
     </div>
   );
