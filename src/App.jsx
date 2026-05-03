@@ -339,6 +339,7 @@ function LoginView({ allUsers, allOffices, onLogin, showToast }) {
   const [regCourse, setRegCourse] = useState('');
   const [regCode, setRegCode] = useState('');
   const [regPass, setRegPass] = useState('');
+  const [regTotalHours, setRegTotalHours] = useState('');
   const [regDirectorName, setRegDirectorName] = useState('');
   const [regDirectorEmail, setRegDirectorEmail] = useState('');
   const [regDirectorOffice, setRegDirectorOffice] = useState('');
@@ -398,7 +399,7 @@ function LoginView({ allUsers, allOffices, onLogin, showToast }) {
 
     const newIntern = {
       role: 'intern', name: regName, studentId: regId, email: regEmail, course: regCourse,
-      password: regPass, officeCode: regCode, status: 'pending', createdAt: new Date().toISOString()
+      password: regPass, officeCode: regCode, status: 'pending', totalHoursRequired: Number(regTotalHours) || 500, createdAt: new Date().toISOString()
     };
 
     try {
@@ -528,6 +529,7 @@ function LoginView({ allUsers, allOffices, onLogin, showToast }) {
                 <input type="email" required value={regEmail} onChange={(e)=>setRegEmail(e.target.value)} className="w-full px-4 py-2 border rounded-lg text-sm" placeholder="Email" />
                 <input type="text" required value={regCourse} onChange={(e)=>setRegCourse(e.target.value)} className="w-full px-4 py-2 border rounded-lg text-sm" placeholder="Course" />
               </div>
+              <input type="number" required value={regTotalHours} onChange={(e)=>setRegTotalHours(e.target.value)} className="w-full px-4 py-2 border rounded-lg text-sm" placeholder="Total Required Hours (e.g. 500)" />
               <input type="password" required value={regPass} onChange={(e)=>setRegPass(e.target.value)} className="w-full px-4 py-2 border rounded-lg text-sm" placeholder="Password" />
               <button type="submit" className="w-full bg-slate-900 text-white font-medium py-2 rounded-lg mt-4 text-sm">Submit Registration</button>
             </form>
@@ -572,6 +574,11 @@ function SuperAdminView({ currentUser, allOffices, allUsers, allLogs, allActivit
   // Super Admin Account States
   const [adminUsername, setAdminUsername] = useState(currentUser.username || 'admin');
   const [adminPassword, setAdminPassword] = useState(currentUser.password || '');
+
+  // User Management States
+  const [showUserModal, setShowUserModal] = useState(false);
+  const [editingUser, setEditingUser] = useState(null);
+  const [userForm, setUserForm] = useState({ role: 'intern', name: '', email: '', password: '', studentId: '', course: '', officeCode: '', status: 'approved' });
 
   // PWA OFFLINE GENERATOR
   const handleDownloadPWA = () => {
@@ -647,6 +654,45 @@ self.addEventListener('fetch', event => {
     } catch (err) { showToast("Error updating settings.", "error"); }
   };
 
+  const handleCreateUser = async (e) => {
+    e.preventDefault();
+    if (allUsers.find(u => u.email === userForm.email || (userForm.studentId && u.studentId === userForm.studentId))) return showToast("Email or Student ID already exists.", "error");
+    const userId = userForm.role === 'intern' ? userForm.studentId : userForm.email;
+    const newUser = { ...userForm, id: userId, createdAt: new Date().toISOString() };
+    try {
+      await setDoc(doc(getPublicPath('users'), userId), newUser);
+      showToast("User created successfully!");
+      setShowUserModal(false);
+      setUserForm({ role: 'intern', name: '', email: '', password: '', studentId: '', course: '', officeCode: '', status: 'approved' });
+    } catch (err) { showToast("Error creating user.", "error"); }
+  };
+
+  const handleEditUser = (user) => {
+    setEditingUser(user);
+    setUserForm({ ...user });
+    setShowUserModal(true);
+  };
+
+  const handleUpdateUser = async (e) => {
+    e.preventDefault();
+    if (allUsers.find(u => (u.email === userForm.email || (userForm.studentId && u.studentId === userForm.studentId)) && u.id !== editingUser.id)) return showToast("Email or Student ID already exists.", "error");
+    try {
+      await setDoc(doc(getPublicPath('users'), editingUser.id), { ...userForm }, { merge: true });
+      showToast("User updated successfully!");
+      setShowUserModal(false);
+      setEditingUser(null);
+      setUserForm({ role: 'intern', name: '', email: '', password: '', studentId: '', course: '', officeCode: '', status: 'approved' });
+    } catch (err) { showToast("Error updating user.", "error"); }
+  };
+
+  const handleDeleteUser = async (userId) => {
+    if (!window.confirm("Are you sure you want to delete this user?")) return;
+    try {
+      await deleteDoc(doc(getPublicPath('users'), userId));
+      showToast("User deleted successfully!");
+    } catch (err) { showToast("Error deleting user.", "error"); }
+  };
+
   return (
     <div className="max-w-7xl mx-auto p-4 sm:p-6 lg:p-8">
       {/* Header */}
@@ -663,6 +709,7 @@ self.addEventListener('fetch', event => {
       {/* Tabs Navigation */}
       <div className="flex border-b border-slate-200 mb-8 overflow-x-auto hide-scrollbar">
         <button className={`px-6 py-3 text-sm font-medium transition-colors whitespace-nowrap ${activeTab === 'dashboard' ? 'border-b-2 border-slate-900 text-slate-900' : 'text-slate-500 hover:text-slate-700'}`} onClick={() => setActiveTab('dashboard')}><div className="flex items-center gap-2"><BarChart3 size={16} /> Overview & Reports</div></button>
+        <button className={`px-6 py-3 text-sm font-medium transition-colors whitespace-nowrap ${activeTab === 'users' ? 'border-b-2 border-slate-900 text-slate-900' : 'text-slate-500 hover:text-slate-700'}`} onClick={() => setActiveTab('users')}><div className="flex items-center gap-2"><Users size={16} /> Manage Users</div></button>
         <button className={`px-6 py-3 text-sm font-medium transition-colors whitespace-nowrap ${activeTab === 'offices' ? 'border-b-2 border-slate-900 text-slate-900' : 'text-slate-500 hover:text-slate-700'}`} onClick={() => setActiveTab('offices')}><div className="flex items-center gap-2"><Building2 size={16} /> Manage Offices</div></button>
         <button className={`px-6 py-3 text-sm font-medium transition-colors whitespace-nowrap ${activeTab === 'settings' ? 'border-b-2 border-slate-900 text-slate-900' : 'text-slate-500 hover:text-slate-700'}`} onClick={() => setActiveTab('settings')}><div className="flex items-center gap-2"><Settings size={16} /> Account Settings</div></button>
       </div>
@@ -731,6 +778,63 @@ self.addEventListener('fetch', event => {
             </div>
           </div>
         </>
+      )}
+
+      {/* Tab: Manage Users */}
+      {activeTab === 'users' && (
+        <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
+          <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
+            <h2 className="text-base font-semibold text-slate-900">User Management</h2>
+            <button onClick={() => { setEditingUser(null); setUserForm({ role: 'intern', name: '', email: '', password: '', studentId: '', course: '', officeCode: '', status: 'approved' }); setShowUserModal(true); }} className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-slate-900 rounded-lg hover:bg-slate-800 transition-colors">
+              <Plus size={16} /> Add User
+            </button>
+          </div>
+          <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
+            <table className="w-full text-left text-sm whitespace-nowrap">
+              <thead className="bg-slate-50 border-b border-slate-100">
+                <tr>
+                  <th className="px-6 py-3 font-medium">User</th>
+                  <th className="px-6 py-3 font-medium">Role</th>
+                  <th className="px-6 py-3 font-medium">Status</th>
+                  <th className="px-6 py-3 font-medium">Office Code</th>
+                  <th className="px-6 py-3 font-medium text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {allUsers.filter(u => u.role !== 'superadmin').map(user => (
+                  <tr key={user.id} className="hover:bg-slate-50 transition-colors">
+                    <td className="px-6 py-4 flex items-center gap-3">
+                      <img src={user.profilePhoto || `https://ui-avatars.com/api/?name=${user.name}&background=f1f5f9&color=64748b`} className="w-8 h-8 rounded-full border border-slate-200 object-cover" alt="Avatar"/>
+                      <div>
+                        <div className="font-medium text-slate-900">{user.name}</div>
+                        <div className="text-xs text-slate-500">{user.studentId || user.email}</div>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <span className={`px-2 py-1 rounded text-xs font-medium ${user.role === 'director' ? 'bg-blue-50 text-blue-700' : 'bg-green-50 text-green-700'}`}>
+                        {user.role}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4">
+                      <span className={`px-2 py-1 rounded text-xs font-medium ${user.status === 'approved' ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'}`}>
+                        {user.status || 'approved'}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 font-mono text-xs">{user.officeCode || '-'}</td>
+                    <td className="px-6 py-4 text-right space-x-2">
+                      <button onClick={() => handleEditUser(user)} className="inline-flex items-center gap-1 bg-blue-600 text-white px-3 py-1.5 rounded text-xs font-medium hover:bg-blue-700 transition-colors">
+                        Edit
+                      </button>
+                      <button onClick={() => handleDeleteUser(user.id)} className="inline-flex items-center gap-1 bg-red-600 text-white px-3 py-1.5 rounded text-xs font-medium hover:bg-red-700 transition-colors">
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
       )}
 
       {/* Tab: Manage Offices & Registration */}
@@ -826,6 +930,41 @@ self.addEventListener('fetch', event => {
 
       {selectedUserForReport && (
         <UserReportModal user={selectedUserForReport} allLogs={allLogs} allActivityLogs={allActivityLogs} onClose={() => setSelectedUserForReport(null)} />
+      )}
+
+      {showUserModal && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden shadow-2xl p-6">
+            <div className="flex justify-between items-center mb-6 border-b border-slate-100 pb-4">
+              <h3 className="font-bold text-lg text-slate-900">{editingUser ? 'Edit User' : 'Add New User'}</h3>
+              <button onClick={() => setShowUserModal(false)}><X size={20} className="text-slate-400" /></button>
+            </div>
+            <form onSubmit={editingUser ? handleUpdateUser : handleCreateUser} className="space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-slate-500 uppercase tracking-wider mb-1">Role</label>
+                <select value={userForm.role} onChange={(e) => setUserForm({ ...userForm, role: e.target.value })} className="w-full px-4 py-2 border rounded-lg text-sm">
+                  <option value="intern">Intern</option>
+                  <option value="director">Director</option>
+                </select>
+              </div>
+              <input type="text" required value={userForm.name} onChange={(e)=>setUserForm({ ...userForm, name: e.target.value })} className="w-full px-4 py-2 border rounded-lg text-sm" placeholder="Full Name" />
+              <input type="email" required value={userForm.email} onChange={(e)=>setUserForm({ ...userForm, email: e.target.value })} className="w-full px-4 py-2 border rounded-lg text-sm" placeholder="Email" />
+              <input type="password" required value={userForm.password} onChange={(e)=>setUserForm({ ...userForm, password: e.target.value })} className="w-full px-4 py-2 border rounded-lg text-sm" placeholder="Password" />
+              {userForm.role === 'intern' && (
+                <>
+                  <input type="text" required value={userForm.studentId} onChange={(e)=>setUserForm({ ...userForm, studentId: e.target.value })} className="w-full px-4 py-2 border rounded-lg text-sm" placeholder="Student ID" />
+                  <input type="text" required value={userForm.course} onChange={(e)=>setUserForm({ ...userForm, course: e.target.value })} className="w-full px-4 py-2 border rounded-lg text-sm" placeholder="Course" />
+                  <input type="text" value={userForm.officeCode} onChange={(e)=>setUserForm({ ...userForm, officeCode: e.target.value })} className="w-full px-4 py-2 border rounded-lg text-sm" placeholder="Office Code" />
+                  <select value={userForm.status} onChange={(e) => setUserForm({ ...userForm, status: e.target.value })} className="w-full px-4 py-2 border rounded-lg text-sm">
+                    <option value="pending">Pending</option>
+                    <option value="approved">Approved</option>
+                  </select>
+                </>
+              )}
+              <button type="submit" className="w-full bg-slate-900 text-white font-medium py-2 rounded-lg mt-4 text-sm">{editingUser ? 'Update User' : 'Create User'}</button>
+            </form>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -1168,8 +1307,12 @@ function DirectorView({ currentUser, allUsers, allLogs, allOffices, onLogout, sh
 
 // --- QR Generator Modal ---
 function QRGeneratorModal({ officeCode, onClose }) {
-  const todayStr = new Date().toLocaleDateString('en-CA');
-  const qrString = `OJT-QR|${officeCode}|${todayStr}`;
+  const [selectedDate, setSelectedDate] = useState('today');
+  const today = new Date();
+  const tomorrow = new Date(today);
+  tomorrow.setDate(today.getDate() + 1);
+  const dateStr = selectedDate === 'today' ? today.toLocaleDateString('en-CA') : tomorrow.toLocaleDateString('en-CA');
+  const qrString = `OJT-QR|${officeCode}|${dateStr}`;
   const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(qrString)}`;
 
   return (
@@ -1180,11 +1323,18 @@ function QRGeneratorModal({ officeCode, onClose }) {
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X size={20}/></button>
         </div>
         <div className="p-8 flex flex-col items-center">
-          <p className="text-sm text-slate-500 mb-6 text-center">Interns must scan this code using their app to time in/out today.</p>
+          <div className="mb-4">
+            <label className="block text-xs font-medium text-slate-500 uppercase tracking-wider mb-1">Select Date</label>
+            <select value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} className="px-4 py-2 border rounded-lg text-sm">
+              <option value="today">Today</option>
+              <option value="tomorrow">Tomorrow</option>
+            </select>
+          </div>
+          <p className="text-sm text-slate-500 mb-6 text-center">Interns must scan this code using their app to time in/out on {selectedDate === 'today' ? 'today' : 'tomorrow'}.</p>
           <div className="bg-white p-2 border-2 border-dashed border-slate-200 rounded-xl mb-6">
             <img src={qrImageUrl} alt="Daily QR Code" className="w-[200px] h-[200px] object-contain" />
           </div>
-          <div className="text-center font-mono text-xs text-slate-400 mb-6">{todayStr}</div>
+          <div className="text-center font-mono text-xs text-slate-400 mb-6">{dateStr}</div>
           <button onClick={() => window.print()} className="w-full bg-slate-900 hover:bg-slate-800 text-white font-medium py-2.5 rounded-lg transition-colors flex items-center justify-center gap-2">
             <Printer size={18} /> Print / Save PDF
           </button>
@@ -1193,7 +1343,7 @@ function QRGeneratorModal({ officeCode, onClose }) {
 
       <div className="hidden print:flex flex-col items-center justify-center w-full h-full bg-white absolute top-0 left-0 z-[1001]">
          <h1 className="text-4xl font-bold mb-2">OJT Daily Attendance</h1>
-         <h2 className="text-xl text-slate-600 mb-10">Date: {todayStr}</h2>
+         <h2 className="text-xl text-slate-600 mb-10">Date: {dateStr}</h2>
          <img src={qrImageUrl} alt="Printable QR Code" className="w-[400px] h-[400px] mb-10" />
          <p className="text-2xl font-medium">Scan using your OJT App to log time.</p>
          <p className="mt-4 text-slate-500">Office Code: {officeCode}</p>
